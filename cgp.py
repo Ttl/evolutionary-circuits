@@ -260,39 +260,47 @@ class CGP:
             weight = lambda x:1
         constraint = self.constraints[i]
         if constraint == None:
-            constraint = lambda f,x : 0
+            constraint = lambda f,x,k : 0
         x = c.evaluate(options)
-        try:
-            f = x[0]
-            v = x[1]
-        except TypeError:
-            return inf
-        if f==[] or v==[]:
+        if x==None or len(x.keys())==0:
             return inf
 
-        y = float(max(f))
-        #Sometimes spice doesn't simulate whole frequency range
-        #I don't know why, so I just check if spice returned the whole range
-        if y<0.99*self.frange[i]:
-            return inf
-        con_filled = True
-        if self.log_plot[i]:
-            print 'log'
-            for p in xrange(1,len(f)):
-                #Divided by frequency for even scores across whole frequency range in log scale.
-                total+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p])+func(f[p-1]) - x[1][p] - x[1][p-1])**2)/x[0][p]
-                if not constraint( f[p],v[p] ):
-                    con_filled=False
-        else:
-            for p in xrange(1,len(f)):
-                total+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p]) + func(f[p-1]) - v[p] - v[p-1] )**2
-                if not constraint( f[p],v[p] ):
-                    con_filled=False
+        total2=0.0
+        for k in x:
+            f = x[k][0]#Input
+            v = x[k][1]#Output
+            y = float(max(f))
+            #Sometimes spice doesn't simulate whole frequency range
+            #I don't know why, so I just check if spice returned the whole range
+            if y<0.99*self.frange[i]:
+                return inf
+            con_filled = True
+            if self.log_plot[i]:
+                for p in xrange(1,len(f)):
+                    #Divided by frequency for even scores across whole frequency range in log scale.
+                    try:
+                        total2+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k)+func(f[p-1],k) - x[1][p] - x[1][p-1])**2)/x[0][p]
+                    except TypeError:
+                        print 'Fitness function returned invalid value'
+                        raise
 
-            #Normalize scores by dividing with maximum value of f.
-            total/=y
-        if total<0:
-            return inf
+                    if not constraint( f[p],v[p],k ):
+                        con_filled=False
+            else:
+                for p in xrange(1,len(f)):
+                    try:
+                        total2+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
+                    except TypeError:
+                        print 'Fitness function returned invalid value'
+                        raise
+                    if not constraint( f[p],v[p],k ):
+                        con_filled=False
+
+                #Normalize scores by dividing with maximum value of f.
+                total+=total2/y
+            if total2<0:
+                return inf
+
         return total*100+10000*(not con_filled)
 
     def printpool(self):
@@ -300,58 +308,66 @@ class CGP:
             print f,c
         print
 
-    def save_plot(self,freq,gain,i,log=True,name='',score=None,**kwargs):
-        plt.figure()
+    def save_plot(self,v,i,log=True,name='',score=None,**kwargs):
 
-        # plot it as a log-scaled graph
-        goal_val = [self.ff[i](c) for c in freq]
-        if self.plot_weight:
-            weight_val = [self.fitness_weight[i](c) for c in freq]
-        if self.plot_constraints:
-            constraint_val = [not self.constraints[i](freq[c],gain[c]) for c in xrange(len(freq))]
-        if log==True:#Logarithmic plot
-            plt.semilogx(freq,gain,'g',basex=10)
-            plt.semilogx(freq,goal_val,'b',basex=10)
+        #For every measurement in results
+        for k in v.keys():
+            plt.figure()
+            freq = v[k][0]
+            gain = v[k][1]
+            goal_val = [self.ff[i](c,k) for c in freq]
             if self.plot_weight:
-                plt.semilogx(freq,weight_val,'r--',basex=10)
-            if self.plot_constraints:
-                plt.semilogx(freq,constraint_val,'m',basex=10)
-        else:
-            plt.plot(freq,gain,'g')
-            plt.plot(freq,goal_val,'b')
-            if self.plot_weight:
-                plt.plot(freq,weight_val,'r--')
-            if self.plot_constraints:
-                plt.plot(freq,constraint_val,'m')
+                weight_val = [self.fitness_weight[i](c,k) for c in freq]
+            if self.constraints[i]!=None and self.plot_constraints:
+                constraint_val = [not self.constraints[i](freq[c],gain[c],k) for c in xrange(len(freq))]
+            if log==True:#Logarithmic plot
+                plt.semilogx(freq,gain,'g',basex=10)
+                plt.semilogx(freq,goal_val,'b',basex=10)
+                if self.plot_weight:
+                    plt.semilogx(freq,weight_val,'r--',basex=10)
+                if self.plot_constraints:
+                    plt.semilogx(freq,constraint_val,'m',basex=10)
+            else:
+                plt.plot(freq,gain,'g')
+                plt.plot(freq,goal_val,'b')
+                if self.plot_weight:
+                    plt.plot(freq,weight_val,'r--')
+                if self.constraints[i]!=None and self.plot_constraints:
+                    plt.plot(freq,constraint_val,'m')
 
-        # update axis ranges
-        ax = []
-        ax[0:4] = plt.axis()
-        # check if we were given a frequency range for the plot
-        if self.plot_yrange!=None:
-            plt.axis([min(freq),max(freq),self.plot_yrange[0],self.plot_yrange[1]])
-        else:
-            plt.axis([min(freq),max(freq),min(-0.5,-0.5+min(goal_val)),max(1.5,0.5+max(goal_val))])
+            # update axis ranges
+            ax = []
+            ax[0:4] = plt.axis()
+            # check if we were given a frequency range for the plot
+            if k in self.plot_yrange.keys():
+                plt.axis([min(freq),max(freq),self.plot_yrange[k][0],self.plot_yrange[k][1]])
+            else:
+                plt.axis([min(freq),max(freq),min(-0.5,-0.5+min(goal_val)),max(1.5,0.5+max(goal_val))])
 
-        if self.sim_type[i]=='dc':
-            plt.xlabel("Input (V)")
-        if self.sim_type[i]=='ac':
-            plt.xlabel("Input (Hz)")
-        if self.sim_type[i]=='tran':
-            plt.xlabel("Time (s)")
+            if self.sim_type[i]=='dc':
+                plt.xlabel("Input (V)")
+            if self.sim_type[i]=='ac':
+                plt.xlabel("Input (Hz)")
+            if self.sim_type[i]=='tran':
+                plt.xlabel("Time (s)")
 
-        if self.plot_titles!=None:
-            plt.title(self.plot_titles[i])
+            if self.plot_titles!=None:
+                #FIXME Plot tiles are too complex when circuits return more than one measurement
+                #plt.title(self.plot_titles[i])
+                plt.title(k)
 
-        plt.annotate('Generation '+str(self.generation),xy=(0.05,0.95),xycoords='figure fraction')
-        if score!=None:
-            plt.annotate('Score '+'{0:.2f}'.format(score),xy=(0.75,0.95),xycoords='figure fraction')
-        plt.grid(True)
-        # turn on the minor gridlines to give that awesome log-scaled look
-        plt.grid(True,which='minor')
-        plt.ylabel("Output (V)")
+            plt.annotate('Generation '+str(self.generation),xy=(0.05,0.95),xycoords='figure fraction')
+            if score!=None:
+                plt.annotate('Score '+'{0:.2f}'.format(score),xy=(0.75,0.95),xycoords='figure fraction')
+            plt.grid(True)
+            # turn on the minor gridlines to give that awesome log-scaled look
+            plt.grid(True,which='minor')
+            if k[0]=='v':
+                plt.ylabel("Output (V)")
+            elif k[0]=='i':
+                plt.ylabel("Output (A)")
 
-        plt.savefig('plot'+strftime("%Y-%m-%d %H:%M:%S")+'-'+name+'.png')
+            plt.savefig('plot'+strftime("%Y-%m-%d %H:%M:%S")+'-'+k+'-'+name+'.png')
 
     def step(self):
         self.generation+=1
@@ -417,7 +433,7 @@ class CGP:
         try:
             for c in xrange(len(self.spice_commands)):
                 self.save_plot(
-                        *self.pool[0][1].evaluate(self.spice_commands[c]),
+                        self.pool[0][1].evaluate(self.spice_commands[c]),
                         i=c,log=self.log_plot,name=str(c),
                         score=self._rank(self.pool[0][1],c))
         except ValueError:
@@ -483,6 +499,7 @@ Vin n1 0
 .control
 dc Vin 4 10 0.1
 print v(n2)
+print i(Vin)
 .endc
 .temp 60
 $.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
@@ -558,21 +575,10 @@ def weight2(f):
         return 2
     return 0.2
 
-def constraint1(f,x):
-    n= 10**(-9)
-    if 0<=f<65*n:
-        if x>1 or x<-1:
-            return False
-    if 75*n<f<=79*n:
-        if x<3.5:
-            return False
-    if 120*n<f<=129*n or f>=145*n:
-        if x>1 or x<-1:
-            return False
-    if 135*n<f<139*n:
-        if x>0.5:
-            return False
-    return True
+def constraint1(f,x,k):
+    """f is Input, x is Output, k is the name of measurement"""
+    if k[0]=='i':
+        return x<0.01
 
 def constraint2(f,x):
     n= 10**(-9)
@@ -590,15 +596,14 @@ def constraint2(f,x):
             return False
     return True
 
-def goal1(f):
-    #n= 10**(-9)
-    #if 72*n<=f<=82*n:
-    #    return 5
-    #if 132*n<=f<=142*n:
-    #    return 5
-    return 2.5
+def goal1(f,k):
+    """k is the name of measurement. eq. v(n2)"""
+    if k=='v(n2)':
+        return 2.5
+    elif k[0]=='i':
+        return 0
 
-def goal2(f):
+def goal2(f,k):
     n= 10**(-9)
     if 22*n<=f<=32*n:
         return 5
@@ -636,7 +641,7 @@ if __name__ == "__main__":
 
     if not resume:
         outfile = open('sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log','w')
-        e = CGP(pool_size=3000,
+        e = CGP(pool_size=300,
                 nodes=10,
                 parts_list=parts,
                 max_parts=12,
@@ -649,7 +654,7 @@ if __name__ == "__main__":
                 spice_sim_commands=options,
                 log=outfile,
                 plot_titles=["Output voltage(27C)","Output voltage(60C)"],
-                plot_yrange=(1,4))
+                plot_yrange={'v(n2)':(2,4),'i(vin)':(-1.5,1.5)})
     else:
         #Resuming from file
         e = pickle.load(r_file)

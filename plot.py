@@ -4,46 +4,50 @@ import math
 import sys
 
 
-def bode_plot(freq,gain,phase=None,**kwargs):
+def bode_plot(v,phase=None,**kwargs):
     plt.figure()
-    if phase!=None:
-        plt.subplot(211)
+    for i,k in enumerate(v.keys(),1):
+        freq=v[k][0]
+        gain=v[k][1]
+        if phase!=None:
+            plt.subplot(211)
 
-    # plot it as a log-scaled graph
-    plt.plot(freq,gain)
-    #plt.semilogx(freq,gain,basex=10,**kwargs)
+        plt.subplot(str(i)+'11')
+        # plot it as a log-scaled graph
+        plt.plot(freq,gain,label=k)
+        #plt.semilogx(freq,gain,basex=10,**kwargs)
 
-    # update axis ranges
-    ax = []
-    ax[0:4] = plt.axis()
-    # check if we were given a frequency range for the plot
-    plt.axis(ax)
-
-    plt.grid(True)
-    # turn on the minor gridlines to give that awesome log-scaled look
-    plt.grid(True,which='minor')
-    plt.ylabel("Gain (dB)")
-
-    if phase!=None:
-        plt.subplot(212)
-        plt.semilogx(freq, phase,basex=10,**kwargs)
-
-        # update axis ranges, we know the phase is between -pi and pi
-        ax = plt.axis()
-        plt.axis([ax[0],ax[1],-math.pi,math.pi])
+        # update axis ranges
+        ax = []
+        ax[0:4] = plt.axis()
+        # check if we were given a frequency range for the plot
+        plt.axis(ax)
 
         plt.grid(True)
+        # turn on the minor gridlines to give that awesome log-scaled look
         plt.grid(True,which='minor')
-        plt.xlabel("Frequency (Hz)")
-        plt.ylabel("Phase (rads)")
+        plt.ylabel("Gain (dB)")
 
-        # nice LaTeX pi scale for the phase part of the plot
-        plt.yticks((-math.pi,-math.pi/2,0,math.pi/2,math.pi),
-                   (r"$-\pi$",r"$-\frac{\pi}{2}$","0",r"$\frac{\pi}{2}$",r"$\pi$"))
+        if phase!=None:
+            plt.subplot(212)
+            plt.semilogx(freq, phase,basex=10,**kwargs)
+
+            # update axis ranges, we know the phase is between -pi and pi
+            ax = plt.axis()
+            plt.axis([ax[0],ax[1],-math.pi,math.pi])
+
+            plt.grid(True)
+            plt.grid(True,which='minor')
+            plt.xlabel("Frequency (Hz)")
+            plt.ylabel("Phase (rads)")
+
+            # nice LaTeX pi scale for the phase part of the plot
+            plt.yticks((-math.pi,-math.pi/2,0,math.pi/2,math.pi),
+                       (r"$-\pi$",r"$-\frac{\pi}{2}$","0",r"$\frac{\pi}{2}$",r"$\pi$"))
+    plt.legend(v.keys())
     plt.show()
 
 def parse_output(output,values,start=1):
-    print output
     value=[[] for i in xrange(values)]
     output=output.split('\n')
     n=0
@@ -59,36 +63,43 @@ def parse_output(output,values,start=1):
                 continue
     return value
 
-def parse_output2(output,columns):
-    value=[[] for i in xrange(len(columns))]
+def parse_output2(output):
+    value={}
     output=output.split('\n')
-    n=0
-    for line in xrange(n,len(output)):
+    index=1
+    current = ()
+    for line in xrange(len(output)):
         temp=output[line].replace(',','').split()
+        if len(temp)>0:
+            if temp[0]=='Index':
+                temp2=output[line+2].replace(',','').split()
+                if float(temp2[0])<index:
+                    current = temp[2]
+                    value[temp[2]]=([],[])
+                    index=0
+
         if len(temp)>2:
             try:
-                #time.append(float(temp[1]))
-                #value.append(float(temp[2]))
-                for i in xrange(values):
-                    value[i].append(float(temp[start+i]))
-            except ValueError:
+                float(temp[1]),float(temp[2])
+            except:
                 continue
+            index+=1
+            for i in xrange(2):
+                value[current][0].append(float(temp[1]))
+                value[current][1].append(float(temp[2]))
     return value
 
 def simulate(file):
-    try:
         spice = subprocess.Popen(['ngspice', '-s'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         output = spice.communicate(file)[0]
-        return parse_output(output,2)
-    except:
-        return None
+        return parse_output2(output)
 
 
 w="""
 .control
 $ac dec 30 1 100khz
 dc V1 0 10 0.05
-print v(n2)
+print i(V1)
 .endc
 $.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
 $.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
@@ -110,16 +121,16 @@ $.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
 $Vin n1 0 dc 0 ac 1
 V1 n1 0
 
-Q176166280 0 0 n3 2N3906
-R198233048 n8 n1 79297.4642619
-Q2494179824 n5 n9 n1 2N3904
-Q1140175264 n0 n5 n9 2N3906
-Q2586645448 n2 n9 n8 2N3904
-Q176168872 0 n3 n5 2N3906
-Q1119116144 n3 0 n0 2N3906
-R663929920 n9 n1 19.8598705947
+Q289250128 0 n4 n7 2N3904
+Q289299352 n6 0 n4 2N3904
+Q1273979728 n6 0 n4 2N3906
+Q158204240 n8 n9 n2 2N3906
+Q270367352 n1 n2 n8 2N3904
+R273979872 0 n0 7390000.56192
+Q2129392152 n3 n8 n7 2N3904
+Q2169627088 n4 0 n6 2N3904
 """
 
 output = simulate(w)
-bode_plot(output[0],output[1])
+bode_plot(output)
 
