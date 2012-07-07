@@ -162,6 +162,10 @@ class CGP:
         print sim
         for e,i in enumerate(sim,1):
             print 'Simulation {0} - Type: {1}, Logarithmic plot: {2}'.format(e,i[0],i[1])
+            if i[3]:
+                print 'Temperature specified in simulation'
+                self.temperatures = True
+                #TODO write current temperature in the plot
 
         self.cache_hits = 0
         self.cache = {}
@@ -216,19 +220,20 @@ class CGP:
 
     def parse_sim_options(self,option):
         m = re.search(r'\n(ac|AC) [a-zA-Z1-9]* [0-9\.]* [0-9\.]* [0-9\.]*[a-zA-Z]?',option)
+        temp = ('.temp' in option) or ('.dtemp' in option)
         if m!=None:
             m = m.group(0).split()
-            return m[0],False if m[1]=='lin' else True,multipliers(m[-1])
+            return m[0],False if m[1]=='lin' else True,multipliers(m[-1]),temp
         m = re.search(r'\n(dc|DC) [a-zA-Z1-9]* [0-9\.]* [0-9\.]*',option)
         if m!=None:
             m = m.group(0).split()
-            return m[0],False,multipliers(m[-1])
+            return m[0],False,multipliers(m[-1]),temp
         m = re.search(r'\n(tran|TRAN) [0-9\.]*[a-zA-Z]? [0-9\.]*[a-zA-Z]?',option)
         if m!=None:
             m = m.group(0).split()
-            return m[0],False,multipliers(m[-1])
+            return m[0],False,multipliers(m[-1]),temp
         else:
-            return 0,False,0
+            return 0,False,0,temp
 
     def rank(self,c):
         """Calculate score of single circuit"""
@@ -239,20 +244,31 @@ class CGP:
             return self.cache[h]
         total=0.0
         for i in xrange(len(self.spice_commands)):
-            total+=self._rank(c,i)
+            x = c.evaluate(self.spice_commands[i])
+            if x==None or len(x.keys())==0:
+                return inf
+
+            for k in x.keys():
+                total+=self._rank(x,i,k)
         if self.cache_size<self.cache_max_size:
             self.cache_size+=1
             self.cache[h]=total
-        if self.constraints_filled:
-            total+=5*len(c.elements)
-        else:
-            total+=1000
+        #TODO fix constraints
+        #if self.constraints_filled:
+        #    total+=5*len(c.elements)
+        #else:
+        #    total+=1000
         return total
 
-    def _rank(self,c,i):
-        """Score of single circuit against single fitness function"""
+    def _rank(self,x,i,k,c=None):
+        """Score of single circuit against single fitness function
+        x is a dictionary of measurements, i is number of simulation, k is the measurement to score"""
+        if c!=None:
+            #Circuit in input and x needs to be calculated.
+            x = c.evaluate(self.spice_commands[i])
+            if x==None or len(x.keys())==0:
+                return inf
         total=0.0
-        options = self.spice_commands[i]
         func = self.ff[i]
         weight = self.fitness_weight[i]
         #If no weight function create function that returns one for all inputs
@@ -261,57 +277,54 @@ class CGP:
         constraint = self.constraints[i]
         if constraint == None:
             constraint = lambda f,x,k : 0
-        x = c.evaluate(options)
-        if x==None or len(x.keys())==0:
+
+        f = x[k][0]#Input
+        v = x[k][1]#Output
+        y = float(max(f))
+        #Sometimes spice doesn't simulate whole frequency range
+        #I don't know why, so I just check if spice returned the whole range
+        if y<0.99*self.frange[i]:
             return inf
+        con_filled = True
+        if self.log_plot[i]:
+            for p in xrange(1,len(f)):
+                #Divided by frequency for even scores across whole frequency range in log scale.
+                try:
+                    total+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k)+func(f[p-1],k) - x[1][p] - x[1][p-1])**2)/x[0][p]
+                except TypeError:
+                    print 'Fitness function returned invalid value'
+                    raise
 
-        total2=0.0
-        for k in x:
-            f = x[k][0]#Input
-            v = x[k][1]#Output
-            y = float(max(f))
-            #Sometimes spice doesn't simulate whole frequency range
-            #I don't know why, so I just check if spice returned the whole range
-            if y<0.99*self.frange[i]:
-                return inf
-            con_filled = True
-            if self.log_plot[i]:
-                for p in xrange(1,len(f)):
-                    #Divided by frequency for even scores across whole frequency range in log scale.
-                    try:
-                        total2+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k)+func(f[p-1],k) - x[1][p] - x[1][p-1])**2)/x[0][p]
-                    except TypeError:
-                        print 'Fitness function returned invalid value'
-                        raise
+                if not constraint( f[p],v[p],k ):
+                    con_filled=False
+        else:
+            for p in xrange(1,len(f)):
+                try:
+                    total+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
+                except TypeError:
+                    print 'Fitness function returned invalid value'
+                    raise
+                if not constraint( f[p],v[p],k ):
+                    con_filled=False
 
-                    if not constraint( f[p],v[p],k ):
-                        con_filled=False
-            else:
-                for p in xrange(1,len(f)):
-                    try:
-                        total2+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
-                    except TypeError:
-                        print 'Fitness function returned invalid value'
-                        raise
-                    if not constraint( f[p],v[p],k ):
-                        con_filled=False
-
-                #Normalize scores by dividing with maximum value of f.
-                total+=total2/y
-            if total2<0:
-                return inf
-
-        return total*100+10000*(not con_filled)
+            total/=y
+        if total<0:
+            return inf
+        #FIXME constraints don't really work anymore after adding multiple measurement per simulation
+        #Constraints are still assigned per simulation, not per measurement
+        return total*1000#+10000*(not con_filled)
 
     def printpool(self):
         for f,c in self.pool:
             print f,c
         print
 
-    def save_plot(self,v,i,log=True,name='',score=None,**kwargs):
-
+    def save_plot(self,circuit,i,log=True,name='',**kwargs):
+        v = circuit.evaluate(self.spice_commands[i])
         #For every measurement in results
         for k in v.keys():
+            score = self._rank(v,i,k)
+
             plt.figure()
             freq = v[k][0]
             gain = v[k][1]
@@ -395,11 +408,11 @@ class CGP:
             newpool=[]
 
         self.logfile.flush()#Flush changes to the logfile
-        #FIXME
-        if (not self.constraints_filled) and (self.alltimebest[0]<10000):
-            print 'Constraint filling solution found'
-            print 'Optimizing for number of elements'
-            self.constraints_filled = True
+        #FIXME constraints still don't work
+        #if (not self.constraints_filled) and (self.alltimebest[0]<10000):
+        #    print 'Constraint filling solution found'
+        #    print 'Optimizing for number of elements'
+        #    self.constraints_filled = True
         self.best=self.pool[0]
         self.history.append((self.generation,self.best[0],self.averagefit()))
 
@@ -433,9 +446,8 @@ class CGP:
         try:
             for c in xrange(len(self.spice_commands)):
                 self.save_plot(
-                        self.pool[0][1].evaluate(self.spice_commands[c]),
-                        i=c,log=self.log_plot,name=str(c),
-                        score=self._rank(self.pool[0][1],c))
+                        self.pool[0][1],
+                        i=c,log=self.log_plot,name=str(c))
         except ValueError:
             print 'Plotting failed'
 
@@ -494,6 +506,7 @@ D1 1 2 1N4148
 + TT = 3.48E-9
 .ENDS
 Vin n1 0
+rload 100k n2 0
 """,
 """
 .control
@@ -542,6 +555,7 @@ D1 1 2 1N4148
 + TT = 3.48E-9
 .ENDS
 Vin n1 0
+rload 100k n2 0
 """]
 
 
@@ -611,13 +625,6 @@ def goal2(f,k):
     #    return 5
     return 0
 
-#1:Vin n1 0 PULSE 'aunif(4.5,0.4)' 'aunif(0.2,0.2)' 70NS 2NS 2NS 60NS
-#2:Vin n1 0 PULSE 'aunif(4.5,0.4)' 'aunif(0.2,0.2)' 20NS 2NS 2NS 100NS
-
-
-#1:70-130
-#2:20-120
-
 
 if __name__ == "__main__":
     resume = False
@@ -630,7 +637,7 @@ if __name__ == "__main__":
                 resume = True
                 print "Resumed"
                 break
-            if r in ('y','Y'):
+            if r in ('y','Y','\n'):
                 resume = True
                 print "Resumed"
                 break
@@ -641,10 +648,10 @@ if __name__ == "__main__":
 
     if not resume:
         outfile = open('sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log','w')
-        e = CGP(pool_size=300,
-                nodes=10,
+        e = CGP(pool_size=4000,
+                nodes=12,
                 parts_list=parts,
-                max_parts=12,
+                max_parts=15,
                 elitism=1,
                 mutation_rate=0.7,
                 crossover_rate=0.25,
@@ -654,7 +661,7 @@ if __name__ == "__main__":
                 spice_sim_commands=options,
                 log=outfile,
                 plot_titles=["Output voltage(27C)","Output voltage(60C)"],
-                plot_yrange={'v(n2)':(2,4),'i(vin)':(-1.5,1.5)})
+                plot_yrange={'v(n2)':(1,4),'i(vin)':(-3.0,0.5)})
     else:
         #Resuming from file
         e = pickle.load(r_file)
