@@ -11,6 +11,7 @@ import pickle
 import getch
 inf = 1e12
 simulation_timeout = 0.5#seconds
+THREADS = 4
 
 class Circuit_gene:
     """Represents single circuit element"""
@@ -97,13 +98,18 @@ class Chromosome:
             #Shuffle list of elements(better crossovers)
             random.shuffle(self.elements)
 
-    def evaluate(self,options):
-        global simulation_timeout
+    def spice_input(self,options):
+        """Generate the input to SPICE"""
+        global simulatiion_timeout
         program = options+'\n'
         for i in self.elements:
             program+=i.spice()+'\n'
-        #FIXME check if n2 is in node list
-        #Should need to check that there exists a path from input to output
+        if ' n2 ' not in program:
+            return None
+        return program
+
+    def evaluate(self,options):
+        program = self.spice_input(options)
         if ' n2 ' not in program:
             return None
         try:
@@ -159,7 +165,7 @@ class CGP:
         self.spice_commands=spice_sim_commands
         sim = map(self.parse_sim_options,self.spice_commands)
 
-        print sim
+        print strftime("%Y-%m-%d %H:%M:%S")
         for e,i in enumerate(sim,1):
             print 'Simulation {0} - Type: {1}, Logarithmic plot: {2}'.format(e,i[0],i[1])
             if i[3]:
@@ -200,7 +206,7 @@ class CGP:
         if len(self.spice_commands)>len(self.ff):
             raise Exception('Not enough fitness functions')
 
-        self.pool_size=pool_size
+        self.pool_size=pool_size+pool_size%THREADS
         self.parts_list = parts_list
         self.generation=1
         self.elitism=elitism
@@ -211,8 +217,10 @@ class CGP:
         log.write("Spice simulation command:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
 
         #Create pool of random circuits
-        temp=[Chromosome(max_parts,parts_list,nodes) for i in xrange(pool_size)]
-        self.pool=sorted([ (self.rank(c),c) for c in temp])
+        temp=[Chromosome(max_parts,parts_list,nodes) for i in xrange(self.pool_size)]
+        self.pool = self.rank_pool(temp)
+        #self.pool=sorted([ (self.rank(c),c) for c in temp])
+        del temp
         self.best=(self.generation,self.pool[0])
         self.history=[(self.generation,self.best[0],self.averagefit())]
 
@@ -237,13 +245,41 @@ class CGP:
         else:
             return 0,False,0,temp
 
+    def rank_pool(self,pool):
+        """Multithreaded version of self.rank, computes scores for whole pool"""
+        results = [[None for c in xrange(len(self.spice_commands))] for i in xrange(self.pool_size)]
+        threads = [None for i in xrange(THREADS)]
+
+        for i in xrange(len(self.spice_commands)):
+            for t in xrange(self.pool_size/THREADS):
+
+                threads = [circuits.spice_thread(a.spice_input(self.spice_commands[i])) for a in pool[t*THREADS:t*THREADS+THREADS]]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                for e,thread in enumerate(threads):
+                    results[THREADS*t+e][i] = thread.result
+        new_pool = [None for i in xrange(self.pool_size)]
+        for t in xrange(self.pool_size):
+            new_pool[t] = [0,pool[t]]#(Score, Circuit)
+            for i in xrange(len(self.spice_commands)):
+                if results[t][i]==None or len(results[t][i].keys())==0:
+                    new_pool[t][0]=inf
+                    continue
+                for k in results[t][i].keys():
+                    new_pool[t][0]+=self._rank(results[t][i],i,k)
+
+        return sorted(new_pool)
+
     def rank(self,c):
-        """Calculate score of single circuit"""
-        #c = circuit
-        h = hashlib.md5(str(c)).hexdigest()
-        if h in self.cache:
-            self.cache_hits +=1
-            return self.cache[h]
+        """Calculate score of single circuit, single threaded"""
+        #x = output of spice simulation
+        #h = hashlib.md5(str(c)).hexdigest()
+        #FIXME caching is disabled
+        #if h in self.cache:
+        #    self.cache_hits +=1
+        #    return self.cache[h]
         total=0.0
         for i in xrange(len(self.spice_commands)):
             x = c.evaluate(self.spice_commands[i])
@@ -252,9 +288,9 @@ class CGP:
 
             for k in x.keys():
                 total+=self._rank(x,i,k)
-        if self.cache_size<self.cache_max_size:
-            self.cache_size+=1
-            self.cache[h]=total
+        #if self.cache_size<self.cache_max_size:
+        #    self.cache_size+=1
+        #    self.cache[h]=total
         #TODO fix constraints
         #if self.constraints_filled:
         #    total+=5*len(c.elements)
@@ -404,19 +440,8 @@ class CGP:
 
         #Update best
         if self.elitism!=0:
-            if self.pool[0][0]<self.alltimebest[0]:
-                print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
-                print 'Cache size: %d/%d'%(self.cache_size,self.cache_max_size)+', Cache hits',self.cache_hits
-                self.alltimebest=self.pool[0]
-                self.plotbest()
-                self.logfile.write(strftime("%Y-%m-%d %H:%M:%S")+' - Generation - '+str(self.generation) +' - '+str(self.alltimebest[0])+':\n'+self.alltimebest[1].pprint()+'\n\n')
             newpool=[self.pool[i][1] for i in xrange(self.elitism)]
         else:
-            #elif self.generation%5==0:
-            print "Generation "+str(self.generation)+" Current best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
-            print 'Cache size: %d/%d'%(self.cache_size,self.cache_max_size)+', Cache hits',self.cache_hits
-            self.plotbest()
-            self.logfile.write(strftime("%Y-%m-%d %H:%M:%S")+' - '+str(self.pool[0][0])+':\n'+self.pool[0][1].pprint()+'\n\n')
             newpool=[]
 
         self.logfile.flush()#Flush changes to the logfile
@@ -449,7 +474,16 @@ class CGP:
                     tries+=1
                     c.mutate()
             newpool.append(c)
-        self.pool=sorted([(self.rank(i),i) for i in newpool])
+        self.pool = self.rank_pool(newpool)
+        #self.pool=sorted([(self.rank(i),i) for i in newpool])
+        if self.pool[0][0]<self.alltimebest[0]:
+                print strftime("%Y-%m-%d %H:%M:%S")
+                print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
+                #print 'Cache size: %d/%d'%(self.cache_size,self.cache_max_size)+', Cache hits',self.cache_hits
+                self.alltimebest=self.pool[0]
+                self.plotbest()
+                self.logfile.write(strftime("%Y-%m-%d %H:%M:%S")+' - Generation - '+str(self.generation) +' - '+str(self.alltimebest[0])+':\n'+self.alltimebest[1].pprint()+'\n\n')
+
 
     def averagefit(self):
         return sum(i[0] for i in self.pool)/float(self.pool_size)
@@ -708,7 +742,7 @@ if __name__ == "__main__":
 
     if not resume:
         outfile = open('sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log','w')
-        e = CGP(pool_size=5000,
+        e = CGP(pool_size=3000,
                 nodes=12,
                 parts_list=parts,
                 max_parts=16,

@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import subprocess
 import math
+import threading
 
 def bode_plot(v,phase=None,**kwargs):
     plt.figure()
@@ -114,42 +115,13 @@ class Timeout(Exception):
 def simulate(file,timeout):
     spice = subprocess.Popen(['timeout','2','ngspice', '-s'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     output = spice.communicate(file)[0]
-    #f = open('spice_out','w')
-    #f.write(output)
-    #f.close()
     return parse_output(output)
 
-q = """* simulation de RC2
-.control
-tran 10n 1000n
-print v(n1)
-.endc
-* Spice netlister for gnetlist
-R5 n4 n5 1k
-V1 n0 0 dc 1 ac 2 pulse 0 1 10n 10n 100n 1u 2u
-R4 n3 n4 1k
-R3 n2 n3 5k
-C5 n5 0 1n
-R2 n1 n2 1K
-C4 n4 0 1n
-R1 n0 n1 1k
-C3 n3 0 1n
-C2 n2 0 1n
-C1 n1 0 1n
-I1 n5 0 DC 0.01mA
-R6 0 n5 10k
-.END"""
-
-w = """*test
-.control
-ac dec 1000 1 250kHz
-write
-print v(n2)
-.endc
-V1 n1 0 dc 0 ac 1
-R1 n1 n2 1k
-C1 n2 0 100nF
-.end"""
-
-#output = simulate(w)
-#bode_plot(output[0],output[1])
+class spice_thread(threading.Thread):
+    def __init__(self, spice_in):
+        threading.Thread.__init__(self)
+        self.spice_in = spice_in
+        self.result = None
+    def run(self):
+        if self.spice_in!=None:
+            self.result = simulate(self.spice_in,0.5)
