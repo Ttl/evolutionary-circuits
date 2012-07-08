@@ -165,7 +165,7 @@ class CGP:
             if i[3]:
                 print 'Temperature specified in simulation'
                 self.temperatures = True
-                #TODO write current temperature in the plot
+                #TODO write the current temperature in the plot
 
         self.cache_hits = 0
         self.cache = {}
@@ -183,10 +183,12 @@ class CGP:
         self.constraints = constraints
         self.constraints_filled = False
 
-        if all(i==None for i in self.fitness_weight):
-            self.plot_weight=False
-        else:
-            self.plot_weight=True
+        #FIXME weight function plotting is currently disabled
+        self.plot_weight=False
+        #if all(i==None for i in self.fitness_weight):
+        #    self.plot_weight=False
+        #else:
+        #    self.plot_weight=True
 
         if all(i==None for i in self.constraints):
             self.plot_constraints=False
@@ -270,10 +272,19 @@ class CGP:
                 return inf
         total=0.0
         func = self.ff[i]
-        weight = self.fitness_weight[i]
-        #If no weight function create function that returns one for all inputs
-        if weight==None:
+        try:#fitness_weight migh be None, or it might be list of None, or list of dictionary that contains None
+            weight = self.fitness_weight[i][k]
+        except IndexError:
             weight = lambda x:1
+        except KeyError:
+            weight = lambda x:1
+        except TypeError:
+            weight = lambda x:1
+        #If no weight function create function that returns one for all inputs
+        if type(weight) in (int,long,float):
+            c = weight
+            weight = lambda x:float(c)#Make a constant anonymous function
+
         constraint = self.constraints[i]
         if constraint == None:
             constraint = lambda f,x,k : 0
@@ -365,9 +376,10 @@ class CGP:
                 plt.xlabel("Time (s)")
 
             if self.plot_titles!=None:
-                #FIXME Plot tiles are too complex when circuits return more than one measurement
-                #plt.title(self.plot_titles[i])
-                plt.title(k)
+                try:
+                    plt.title(self.plot_titles[i][k])
+                except:
+                    plt.tile(k)
 
             plt.annotate('Generation '+str(self.generation),xy=(0.05,0.95),xycoords='figure fraction')
             if score!=None:
@@ -556,12 +568,60 @@ D1 1 2 1N4148
 .ENDS
 Vin n1 0
 rload 100k n2 0
+""",
+"""
+.control
+dc Vin 4 10 0.1
+print v(n2)
+.endc
+.temp 45
+$.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
+$.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
+.model 2N3906  PNP(Is=455.9E-18 Xti=3 Eg=1.11 Vaf=33.6 Bf=204 Ise=7.558f
++               Ne=1.536 Ikf=.3287 Nk=.9957 Xtb=1.5 Var=100 Br=3.72
++               Isc=529.3E-18 Nc=15.51 Ikr=11.1 Rc=.8508 Cjc=10.13p Mjc=.6993
++               Vjc=1.006 Fc=.5 Cje=10.39p Mje=.6931 Vje=.9937 Tr=10n Tf=181.2p
++               Itf=4.881m Xtf=.7939 Vtf=10 Rb=10, level=1)
+*
+*               Fairchild  pid=66   case=TO92
+*               11/19/2001 calccb update
+*$
+.model 2N3904   NPN(Is=6.734f Xti=3 Eg=1.11 Vaf=74.03 Bf=416.7 Ne=1.259
++               Ise=6.734f Ikf=66.78m Xtb=1.5 Br=.7371 Nc=2 Isc=0 Ikr=0 Rc=1
++               Cjc=3.638p Mjc=.3085 Vjc=.75 Fc=.5 Cje=4.493p Mje=.2593 Vje=.75
++               Tr=239.5n Tf=301.2p Itf=.4 Vtf=4 Xtf=2 Rb=10, level=1)
+*               Fairchild        pid=23          case=TO92
+*               88-09-08 bam    creation
+.SUBCKT 1N4148 1 2
+*
+* The resistor R1 does not reflect
+* a physical device. Instead it
+* improves modeling in the reverse
+* mode of operation.
+*
+R1 1 2 5.827E+9
+D1 1 2 1N4148
+*
+.MODEL 1N4148 D
++ IS = 4.352E-9
++ N = 1.906
++ BV = 110
++ IBV = 0.0001
++ RS = 0.6458
++ CJO = 7.048E-13
++ VJ = 0.869
++ M = 0.03
++ FC = 0.5
++ TT = 3.48E-9
+.ENDS
+Vin n1 0
+rload 10k n2 0
 """]
 
 
 #Dictionary of the availabe parts
 parts = {'R':{'nodes':2,'value':1,'min':0,'max':7},
-         'C':{'nodes':2,'value':1,'min':-13,'max':-3},
+         #'C':{'nodes':2,'value':1,'min':-13,'max':-4},
          #'L':{'nodes':2,'value':1,'min':-9,'max':-3},
          #'D1':{'nodes':2,'spice':'1N4148'},
          'Q1':{'nodes':3,'spice':'2N3906'},
@@ -648,20 +708,20 @@ if __name__ == "__main__":
 
     if not resume:
         outfile = open('sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log','w')
-        e = CGP(pool_size=4000,
+        e = CGP(pool_size=5000,
                 nodes=12,
                 parts_list=parts,
-                max_parts=15,
+                max_parts=16,
                 elitism=1,
                 mutation_rate=0.7,
                 crossover_rate=0.25,
-                fitnessfunction=[goal1,goal1],
-                fitness_weight=[None,None],
-                constraints=[None,None],
+                fitnessfunction=[goal1,goal1,goal1],
+                fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':10},{'v(n2)':1.5}],
+                constraints=[None,None,None],
                 spice_sim_commands=options,
                 log=outfile,
-                plot_titles=["Output voltage(27C)","Output voltage(60C)"],
-                plot_yrange={'v(n2)':(1,4),'i(vin)':(-3.0,0.5)})
+                plot_titles=[{'v(n2)':"Output voltage(V) 27C, 100k load"},{'v(n2)':"Output voltage(V) 60C, 100k load",'i(vin)':'Input current(A) 60C, 100k load'},{'v(n2)':'Output voltage(V) 50C, 10k load'}],
+                plot_yrange={'v(n2)':(1,4),'i(vin)':(-0.5,0.1)})
     else:
         #Resuming from file
         e = pickle.load(r_file)
