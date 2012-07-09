@@ -112,9 +112,14 @@ def parse_output2(output,values,columns):
 class Timeout(Exception):
     pass
 
-def simulate(file,timeout):
-    spice = subprocess.Popen(['timeout','2','ngspice', '-s'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+def simulate(file):
+    spice = subprocess.Popen(['ngspice', '-s'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     output = spice.communicate(file)[0]
+    try:#Sometimes Pipe is left open and long running process dies with error "OSError: [Errno 24] Too many open files"
+        spice.kill()
+    except OSError:
+        #Already dead
+        pass
     return parse_output(output)
 
 class spice_thread(threading.Thread):
@@ -124,4 +129,4 @@ class spice_thread(threading.Thread):
         self.result = None
     def run(self):
         if self.spice_in!=None:
-            self.result = simulate(self.spice_in,0.5)
+            self.result = simulate(self.spice_in)
