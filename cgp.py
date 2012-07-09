@@ -552,7 +552,7 @@ D1 1 2 1N4148
 + TT = 3.48E-9
 .ENDS
 Vin n1 0
-rload 100k n2 0
+rload n2 0 100k
 """,
 """
 .control
@@ -601,7 +601,7 @@ D1 1 2 1N4148
 + TT = 3.48E-9
 .ENDS
 Vin n1 0
-rload 100k n2 0
+rload n2 0 100k
 """,
 """
 .control
@@ -649,7 +649,7 @@ D1 1 2 1N4148
 + TT = 3.48E-9
 .ENDS
 Vin n1 0
-rload 10k n2 0
+rload n2 0 10k
 """]
 
 
