@@ -109,15 +109,14 @@ class Chromosome:
         return program
 
     def evaluate(self,options):
+        """Used in plotting, when only 1 circuits needs to be simulated"""
         program = self.spice_input(options)
         if ' n2 ' not in program:
             return None
-        try:
-            out = circuits.simulate(program,simulation_timeout)
-        except circuits.Timeout:
-            print 'timeout'
-            return None
-        return out
+        thread = circuits.spice_thread(self.spice_input(options))
+        thread.start()
+        thread.join(simulation_timeout)
+        return thread.result
 
 def multipliers(x):
     """Convert values with units to values"""
@@ -257,7 +256,7 @@ class CGP:
                 for thread in threads:
                     thread.start()
                 for thread in threads:
-                    thread.join()
+                    thread.join(simulation_timeout)
                 for e,thread in enumerate(threads):
                     results[THREADS*t+e][i] = thread.result
         new_pool = [None for i in xrange(self.pool_size)]
@@ -742,20 +741,20 @@ if __name__ == "__main__":
 
     if not resume:
         outfile = open('sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log','w')
-        e = CGP(pool_size=3000,
+        e = CGP(pool_size=350,
                 nodes=12,
                 parts_list=parts,
-                max_parts=16,
+                max_parts=18,
                 elitism=1,
                 mutation_rate=0.7,
                 crossover_rate=0.25,
                 fitnessfunction=[goal1,goal1,goal1],
-                fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':10},{'v(n2)':1.5}],
+                fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':50},{'v(n2)':1}],
                 constraints=[None,None,None],
                 spice_sim_commands=options,
                 log=outfile,
                 plot_titles=[{'v(n2)':"Output voltage(V) 27C, 100k load"},{'v(n2)':"Output voltage(V) 60C, 100k load",'i(vin)':'Input current(A) 60C, 100k load'},{'v(n2)':'Output voltage(V) 50C, 10k load'}],
-                plot_yrange={'v(n2)':(1,4),'i(vin)':(-0.5,0.1)})
+                plot_yrange={'v(n2)':(1,4),'i(vin)':(-0.2,0.05)})
     else:
         #Resuming from file
         e = pickle.load(r_file)
@@ -764,6 +763,17 @@ if __name__ == "__main__":
     try:
         while True:
             e.step()
+            if e.generation%5==0:
+                print "Saving progress"
+                with open('.dump','w') as dump:
+                    try:
+                        e.logfile = outfile.name
+                        dump = open('.dump','w')#Save progress
+                        pickle.dump(e,dump)
+                        e.logfile = open(outfile.name,'a')
+                        print "Saving done"
+                    except:
+                        print "Error: Couldn't write output file"
     except KeyboardInterrupt:
         #Save space by erasing cache
         print "Saving state..."
