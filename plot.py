@@ -12,7 +12,6 @@ def bode_plot(v,phase=None,**kwargs):
         if phase!=None:
             plt.subplot(211)
 
-        plt.subplot(str(i)+'11')
         # plot it as a log-scaled graph
         plt.plot(freq,gain,label=k)
         #plt.semilogx(freq,gain,basex=10,**kwargs)
@@ -99,7 +98,7 @@ w="""
 .control
 $ac dec 30 1 100khz
 dc V1 0 10 0.05
-print i(V1)
+print v(n2)
 .endc
 $.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
 $.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
@@ -120,15 +119,17 @@ $.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
 *               88-09-08 bam    creation
 $Vin n1 0 dc 0 ac 1
 V1 n1 0
+rload n2 0 100
 
-Q289250128 0 n4 n7 2N3904
-Q289299352 n6 0 n4 2N3904
-Q1273979728 n6 0 n4 2N3906
-Q158204240 n8 n9 n2 2N3906
-Q270367352 n1 n2 n8 2N3904
-R273979872 0 n0 7390000.56192
-Q2129392152 n3 n8 n7 2N3904
-Q2169627088 n4 0 n6 2N3904
+Q250477824 n3 n1 n5 2N3904
+Q150476960 n4 n1 n7 2N3906
+Q250477392 n4 n2 n6 2N3904
+Q199670712 0 n11 n0 2N3906
+C99671792 n7 n4 3.07665966408e-10
+Q150476744 n6 n7 n10 2N3906
+C73196392 n4 n6 3.61125432394e-07
+Q1105789920 n6 n5 n5 2N3906
+R95832112 n1 n9 1521.3590662
 """
 
 output = simulate(w)
