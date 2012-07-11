@@ -346,10 +346,14 @@ class CGP:
         else:
             for p in xrange(1,len(f)):
                 try:
-                    total+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
+                    #total+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
+                    total+=weight( f[p] )*(f[p]-f[p-1])*( func(f[p],k) - v[p] )**2
                 except TypeError:
                     print 'Fitness function returned invalid value'
                     raise
+                except OverflowError:
+                    total=inf
+                    pass
                 if not constraint( f[p],v[p],k ):
                     con_filled=False
 
@@ -428,6 +432,7 @@ class CGP:
                 plt.ylabel("Output (A)")
 
             plt.savefig('plot'+strftime("%Y-%m-%d %H:%M:%S")+'-'+k+'-'+name+'.png')
+            plt.clf()
 
     def step(self):
         self.generation+=1
@@ -555,7 +560,7 @@ rload n2 0 100k
 """,
 """
 .control
-dc Vin 4 10 0.1
+dc Vin 4.5 11 0.1
 print v(n2)
 print i(Vin)
 .endc
@@ -604,7 +609,7 @@ rload n2 0 100k
 """,
 """
 .control
-dc Vin 4 10 0.1
+dc Vin 3.5 9 0.1
 print v(n2)
 .endc
 .temp 45
@@ -649,12 +654,59 @@ D1 1 2 1N4148
 .ENDS
 Vin n1 0
 rload n2 0 10k
-"""]
-
+""",
+"""
+.control
+tran 0.5n 250n
+print v(n2)
+.endc
+$.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
+$.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
+.model 2N3906  PNP(Is=455.9E-18 Xti=3 Eg=1.11 Vaf=33.6 Bf=204 Ise=7.558f
++               Ne=1.536 Ikf=.3287 Nk=.9957 Xtb=1.5 Var=100 Br=3.72
++               Isc=529.3E-18 Nc=15.51 Ikr=11.1 Rc=.8508 Cjc=10.13p Mjc=.6993
++               Vjc=1.006 Fc=.5 Cje=10.39p Mje=.6931 Vje=.9937 Tr=10n Tf=181.2p
++               Itf=4.881m Xtf=.7939 Vtf=10 Rb=10, level=1)
+*
+*               Fairchild  pid=66   case=TO92
+*               11/19/2001 calccb update
+*$
+.model 2N3904   NPN(Is=6.734f Xti=3 Eg=1.11 Vaf=74.03 Bf=416.7 Ne=1.259
++               Ise=6.734f Ikf=66.78m Xtb=1.5 Br=.7371 Nc=2 Isc=0 Ikr=0 Rc=1
++               Cjc=3.638p Mjc=.3085 Vjc=.75 Fc=.5 Cje=4.493p Mje=.2593 Vje=.75
++               Tr=239.5n Tf=301.2p Itf=.4 Vtf=4 Xtf=2 Rb=10, level=1)
+*               Fairchild        pid=23          case=TO92
+*               88-09-08 bam    creation
+.SUBCKT 1N4148 1 2
+*
+* The resistor R1 does not reflect
+* a physical device. Instead it
+* improves modeling in the reverse
+* mode of operation.
+*
+R1 1 2 5.827E+9
+D1 1 2 1N4148
+*
+.MODEL 1N4148 D
++ IS = 4.352E-9
++ N = 1.906
++ BV = 110
++ IBV = 0.0001
++ RS = 0.6458
++ CJO = 7.048E-13
++ VJ = 0.869
++ M = 0.03
++ FC = 0.5
++ TT = 3.48E-9
+.ENDS
+Vin n1 0 PULSE(0 10 10n 1n 1n 1 1)
+rload n2 0 100k
+"""
+]
 
 #Dictionary of the availabe parts
 parts = {'R':{'nodes':2,'value':1,'min':0,'max':7},
-         #'C':{'nodes':2,'value':1,'min':-13,'max':-4},
+         'C':{'nodes':2,'value':1,'min':-13,'max':-4},
          #'L':{'nodes':2,'value':1,'min':-9,'max':-3},
          #'D1':{'nodes':2,'spice':'1N4148'},
          'Q1':{'nodes':3,'spice':'2N3906'},
@@ -719,6 +771,13 @@ def goal2(f,k):
     return 0
 
 
+def transient_goal(f,k):
+    n = 10**(-9)
+    if f<=10*n:
+        return 0
+    else:
+        return 2.5
+
 if __name__ == "__main__":
     resume = False
     try:
@@ -741,19 +800,19 @@ if __name__ == "__main__":
 
     if not resume:
         outfile = open('sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log','w')
-        e = CGP(pool_size=350,
-                nodes=12,
+        e = CGP(pool_size=1000,
+                nodes=10,
                 parts_list=parts,
-                max_parts=18,
+                max_parts=14,
                 elitism=1,
                 mutation_rate=0.7,
                 crossover_rate=0.25,
-                fitnessfunction=[goal1,goal1,goal1],
-                fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':50},{'v(n2)':1}],
-                constraints=[None,None,None],
+                fitnessfunction=[goal1,goal1,goal1,transient_goal],
+                fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':50},{'v(n2)':1},{'v(n2)':0.05}],
+                constraints=[None,None,None,None],
                 spice_sim_commands=options,
                 log=outfile,
-                plot_titles=[{'v(n2)':"Output voltage(V) 27C, 100k load"},{'v(n2)':"Output voltage(V) 60C, 100k load",'i(vin)':'Input current(A) 60C, 100k load'},{'v(n2)':'Output voltage(V) 50C, 10k load'}],
+                plot_titles=[{'v(n2)':"Output voltage(V) 27C, 100k load"},{'v(n2)':"Output voltage(V) 60C, 100k load",'i(vin)':'Input current(A) 60C, 100k load'},{'v(n2)':'Output voltage(V) 50C, 10k load'},{'v(n2)':'10V Step response'}],
                 plot_yrange={'v(n2)':(1,4),'i(vin)':(-0.2,0.05)})
     else:
         #Resuming from file
