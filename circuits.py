@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import subprocess
 import math
 import threading
+import pdb
 
 def bode_plot(v,phase=None,**kwargs):
     plt.figure()
@@ -61,7 +62,7 @@ def parse_output(output):
                     value[temp[2]]=([],[])
                     index=0
 
-        if len(temp)>2:
+        if len(temp)>2 and current!=():
             try:
                 float(temp[1]),float(temp[2])
             except:
@@ -113,7 +114,7 @@ class Timeout(Exception):
     pass
 
 def simulate(file):
-    spice = subprocess.Popen(['ngspice', '-s'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    spice = subprocess.Popen(['timeout','1','ngspice','-n'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     output = spice.communicate(file)[0]
     try:#Sometimes Pipe is left open and long running process dies with error "OSError: [Errno 24] Too many open files"
         spice.kill()
