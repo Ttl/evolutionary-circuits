@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import circuits
 import random
 from copy import deepcopy
