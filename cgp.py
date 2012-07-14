@@ -472,7 +472,6 @@ class CGP:
         else:
             newpool=[]
 
-        self.logfile.flush()#Flush changes to the logfile
         #FIXME constraints still don't work
         #if (not self.constraints_filled) and (self.alltimebest[0]<10000):
         #    print 'Constraint filling solution found'
@@ -509,6 +508,7 @@ class CGP:
                 self.alltimebest=self.pool[0]
                 self.plotbest()
                 self.logfile.write(strftime("%Y-%m-%d %H:%M:%S")+' - Generation - '+str(self.generation) +' - '+str(self.alltimebest[0])+':\n'+self.alltimebest[1].pprint()+'\n\n')
+                self.logfile.flush()#Flush changes to the logfile
 
 
     def averagefit(self):
@@ -531,11 +531,11 @@ class CGP:
                 self.step()
                 if self.generation%5==0:
                     print "Saving progress"
-                    self.save_progress(self,path_join(self.directory,'.dump'))
+                    self.save_progress(path_join(self.directory,'.dump'))
         except KeyboardInterrupt:
             #Save space by erasing cache
             print "Saving state..."
-            self.save_progress(self,path_join(self.directory,'.dump'))
+            self.save_progress(path_join(self.directory,'.dump'))
 
     def save_progress(self,out):
         """Saves CGP pool,generation and log filename to file"""
