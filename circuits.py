@@ -27,16 +27,14 @@ def parse_output(output):
                 value[current][1].append(float(temp[2]))
     return value
 
-def simulate(file):
-    spice = subprocess.Popen(['ngspice','-n'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-    output = spice.communicate(file)
-    return (output[1],parse_output(output[0]))
-
 class spice_thread(threading.Thread):
     def __init__(self, spice_in):
         threading.Thread.__init__(self)
         self.spice_in = spice_in
         self.result = None
+        if self.spice_in!=None:
+            self.spice = subprocess.Popen(['ngspice','-n'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     def run(self):
         if self.spice_in!=None:
-            self.result = simulate(self.spice_in)
+            output = self.spice.communicate(self.spice_in)
+            self.result = (output[1],parse_output(output[0]))

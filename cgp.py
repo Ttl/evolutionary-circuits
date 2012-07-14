@@ -289,6 +289,10 @@ class CGP:
                     thread.start()
                 for thread in threads:
                     thread.join(simulation_timeout)
+                    if thread.is_alive():
+                        thread.spice.terminate()
+                        thread.join()
+
                 for e,thread in enumerate(threads):
                     if thread.result==None:
                         errors+=1
