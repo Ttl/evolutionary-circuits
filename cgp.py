@@ -183,6 +183,7 @@ class CGP:
     spice_sim_commands,
     log,
     directory='',
+    resumed=False,
     extra_value=None,
     plot_titles=None,
     plot_yrange=None):
@@ -238,15 +239,16 @@ class CGP:
         self.mrate = mutation_rate
         self.crate = crossover_rate
         self.logfile = log
-        log.write("Spice simulation command:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
+        if not resumed:
+            log.write("Spice simulation command:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
 
         #Create pool of random circuits
-        temp=[Chromosome(max_parts,parts_list,nodes,extra_value=extra_value) for i in xrange(self.pool_size)]
-        self.pool = self.rank_pool(temp)
-        #self.pool=sorted([ (self.rank(c),c) for c in temp])
-        del temp
-        self.best=(self.generation,self.pool[0])
-        self.history=[(self.generation,self.best[0],self.averagefit())]
+        if not resumed:
+            temp=[Chromosome(max_parts,parts_list,nodes,extra_value=extra_value) for i in xrange(self.pool_size)]
+            self.pool = self.rank_pool(temp)
+            #self.pool=sorted([ (self.rank(c),c) for c in temp])
+            del temp
+            self.best=(self.generation,self.pool[0])
 
         self.plot_titles = plot_titles
         self.plot_yrange = plot_yrange
@@ -477,7 +479,6 @@ class CGP:
         #    print 'Optimizing for number of elements'
         #    self.constraints_filled = True
         self.best=self.pool[0]
-        self.history.append((self.generation,self.best[0],self.averagefit()))
 
         #We have already chosen "self.elitism" of circuits in the new pool
         newsize=self.elitism
@@ -524,14 +525,25 @@ class CGP:
             print 'Plotting failed'
             raise
 
-def save_progress(cgp,out):
-    """Saves CGP pool,generation and log filename to file"""
-    #pickle format: (generation,pool,logfile)
-    with open(out,'w') as dump:
+    def run(self):
         try:
-            data = (cgp.generation,cgp.pool,cgp.logfile.name)
-            pickle.dump(data,dump)
-            print "Saving done"
-        except:
-            print "Error: Couldn't write output file"
-            raise
+            while True:
+                self.step()
+                if self.generation%5==0:
+                    print "Saving progress"
+                    self.save_progress(self,path_join(self.directory,'.dump'))
+        except KeyboardInterrupt:
+            #Save space by erasing cache
+            print "Saving state..."
+            self.save_progress(self,path_join(self.directory,'.dump'))
+
+    def save_progress(self,out):
+        """Saves CGP pool,generation and log filename to file"""
+        #pickle format: (generation,pool,logfile)
+        with open(out,'w') as dump:
+            try:
+                data = (self.generation,self.pool,self.logfile.name)
+                pickle.dump(data,dump)
+                print "Saving done"
+            except:
+                print "Error: Couldn't write output file"
