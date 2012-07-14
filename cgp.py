@@ -501,8 +501,8 @@ class CGP:
             newpool.append(c)
         start = time()
         self.pool = self.rank_pool(newpool)
-        print "Simulations per second: {}".format((len(self.spice_commands)*self.pool_size)/(time()-start))
-        print "Time per generation: {}".format(start-time())
+        print "Simulations per second: {}".format(round((len(self.spice_commands)*self.pool_size)/(time()-start),1))
+        print "Time per generation: {} seconds".format(round(time()-start,1))
         if self.pool[0][0]<self.alltimebest[0]:
                 print strftime("%Y-%m-%d %H:%M:%S")
                 print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
