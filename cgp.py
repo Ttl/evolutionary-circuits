@@ -7,20 +7,21 @@ from copy import deepcopy
 from time import strftime
 import math
 import re
-import pdb
-import matplotlib.pyplot as plt
-import hashlib
 import pickle
 import getch
+from os.path import join as path_join
 inf = 1e12
 simulation_timeout = 0.5#seconds
 THREADS = 4
 
 class Circuit_gene:
-    """Represents single circuit element"""
+    """Represents a single component"""
     def __init__(self,name,nodes,*args):
+        #Spice name(eg. for resistor: "R")
         self.spice_name = name
+        #Name of the component(eg. "R1")
         self.name = name+str(id(self))
+        #N-tuple of values
         self.values = args
         self.spice_options = ' '.join(map(str,*args))
         self.nodes = nodes
@@ -31,6 +32,7 @@ class Circuit_gene:
 
     def spice(self):
         return self.name+' '+self.nodesstr+' '+self.spice_options
+
 
 def log_dist(a,b):
     #Uniform random number in logarithmic scale
@@ -67,21 +69,29 @@ def mutate_value(element,parts):
     return Circuit_gene(element.spice_name,element.nodes,val)
 
 class Chromosome:
-    def __init__(self,max_parts,parts_list,nodes):
+    """Class that contains one circuit and all of it's parameters"""
+    def __init__(self,max_parts,parts_list,nodes,extra_value=None):
+        #Maximum number of components in circuit
         self.max_parts = max_parts
+        #List of nodes
         self.nodes = ['n'+str(i) for i in xrange(nodes)]
-        self.nodes.append('0')
+        self.nodes.append('0')#Add ground node
         self.parts_list = parts_list
+        #Generates randomly a circuit
         self.elements = [random_element(self.parts_list,self.nodes) for i in xrange(random.randint(1,max_parts/2))]
+        self.extra_range = extra_value
+        if extra_value!=None:
+            self.extra_value = random.uniform(*self.extra_range)
 
     def __repr__(self):
         return str(self.elements)
 
     def pprint(self):
+        """Pretty print function"""
         return '\n'.join(map(str,self.elements))
 
     def mutate(self):
-        m = random.randint(0,4)
+        m = random.randint(0,5)
         i = random.randint(0,len(self.elements)-1)
         if m==0:
             #Change value of one component
@@ -100,6 +110,10 @@ class Chromosome:
         elif m==4:
             #Shuffle list of elements(better crossovers)
             random.shuffle(self.elements)
+        elif m==5:
+            #Change the extra_value
+            if self.extra_range!=None:
+                self.extra_value = random.uniform(*self.extra_range)
 
     def spice_input(self,options):
         """Generate the input to SPICE"""
@@ -107,6 +121,9 @@ class Chromosome:
         program = options+'\n'
         for i in self.elements:
             program+=i.spice()+'\n'
+        #FIXME, this shouldn't be hard coded
+        #We should read from the spice commands all the
+        #printed nodes
         if ' n2 ' not in program:
             return None
         return program
@@ -122,15 +139,18 @@ class Chromosome:
         return thread.result
 
 def multipliers(x):
-    """Convert values with units to values"""
+    """Convert values with si multipliers to numbers"""
     try:
         return float(x)
     except:
         pass
-    a = x[-1]
-    y = float(x[:-1])
-    endings = {'u':-6,'n':-9,'p':-12,'s':0}
-    return y*(10**endings[a])
+    try:
+        a = x[-1]
+        y = float(x[:-1])
+        endings = {'u':-6,'n':-9,'p':-12,'s':0}
+        return y*(10**endings[a])
+    except:
+        raise ValueError("I don't know what {} means".format(x))
 
 class CGP:
     """
@@ -162,6 +182,8 @@ class CGP:
     constraints,
     spice_sim_commands,
     log,
+    directory='',
+    extra_value=None,
     plot_titles=None,
     plot_yrange=None):
         self.spice_commands=spice_sim_commands
@@ -219,7 +241,7 @@ class CGP:
         log.write("Spice simulation command:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
 
         #Create pool of random circuits
-        temp=[Chromosome(max_parts,parts_list,nodes) for i in xrange(self.pool_size)]
+        temp=[Chromosome(max_parts,parts_list,nodes,extra_value=extra_value) for i in xrange(self.pool_size)]
         self.pool = self.rank_pool(temp)
         #self.pool=sorted([ (self.rank(c),c) for c in temp])
         del temp
@@ -229,8 +251,13 @@ class CGP:
         self.plot_titles = plot_titles
         self.plot_yrange = plot_yrange
 
+        #Directory to save files in
+        self.directory = directory
+
 
     def parse_sim_options(self,option):
+        """Parses spice simulation commands for ac,dc,trans and temp words.
+        If ac simulation is found plotting scale is made logarithmic"""
         m = re.search(r'\n(ac|AC) [a-zA-Z1-9]* [0-9\.]* [0-9\.]* [0-9\.]*[a-zA-Z]?',option)
         temp = ('.temp' in option) or ('.dtemp' in option)
         if m!=None:
@@ -252,7 +279,9 @@ class CGP:
         results = [[None for c in xrange(len(self.spice_commands))] for i in xrange(self.pool_size)]
         threads = [None for i in xrange(THREADS)]
 
+        lasterror = None
         for i in xrange(len(self.spice_commands)):
+            errors = 0
             for t in xrange(self.pool_size/THREADS):
 
                 threads = [circuits.spice_thread(a.spice_input(self.spice_commands[i])) for a in pool[t*THREADS:t*THREADS+THREADS]]
@@ -261,7 +290,18 @@ class CGP:
                 for thread in threads:
                     thread.join(simulation_timeout)
                 for e,thread in enumerate(threads):
-                    results[THREADS*t+e][i] = thread.result
+                    if thread.result==None:
+                        errors+=1
+                        lasterror = "Simulation timedout"
+                    elif thread.result[1]=={}:
+                        errors+=1
+                        lasterror = thread.result[0]
+                    else:
+                        results[THREADS*t+e][i] = thread.result[1]
+            if errors == self.pool_size:
+                #All simulations failed
+                raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
+
         new_pool = [None for i in xrange(self.pool_size)]
         for t in xrange(self.pool_size):
             new_pool[t] = [0,pool[t]]#(Score, Circuit)
@@ -270,37 +310,11 @@ class CGP:
                     new_pool[t][0]=inf
                     continue
                 for k in results[t][i].keys():
-                    new_pool[t][0]+=self._rank(results[t][i],i,k)
+                    new_pool[t][0]+=self._rank(results[t][i],i,k,extra=pool[t].extra_value)
 
         return sorted(new_pool)
 
-    def rank(self,c):
-        """Calculate score of single circuit, single threaded"""
-        #x = output of spice simulation
-        #h = hashlib.md5(str(c)).hexdigest()
-        #FIXME caching is disabled
-        #if h in self.cache:
-        #    self.cache_hits +=1
-        #    return self.cache[h]
-        total=0.0
-        for i in xrange(len(self.spice_commands)):
-            x = c.evaluate(self.spice_commands[i])
-            if x==None or len(x.keys())==0:
-                return inf
-
-            for k in x.keys():
-                total+=self._rank(x,i,k)
-        #if self.cache_size<self.cache_max_size:
-        #    self.cache_size+=1
-        #    self.cache[h]=total
-        #TODO fix constraints
-        #if self.constraints_filled:
-        #    total+=5*len(c.elements)
-        #else:
-        #    total+=1000
-        return total
-
-    def _rank(self,x,i,k,c=None):
+    def _rank(self,x,i,k,extra=None,c=None):
         """Score of single circuit against single fitness function
         x is a dictionary of measurements, i is number of simulation, k is the measurement to score"""
         if c!=None:
@@ -339,7 +353,7 @@ class CGP:
             for p in xrange(1,len(f)):
                 #Divided by frequency for even scores across whole frequency range in log scale.
                 try:
-                    total+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k)+func(f[p-1],k) - x[1][p] - x[1][p-1])**2)/x[0][p]
+                    total+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k,extra)+func(f[p-1],k,extra) - x[1][p] - x[1][p-1])**2)/x[0][p]
                 except TypeError:
                     print 'Fitness function returned invalid value'
                     raise
@@ -350,7 +364,7 @@ class CGP:
             for p in xrange(1,len(f)):
                 try:
                     #total+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
-                    total+=weight( f[p] )*(f[p]-f[p-1])*( func(f[p],k) - v[p] )**2
+                    total+=weight( f[p] )*(f[p]-f[p-1])*( func(f[p],k,extra) - v[p] )**2
                 except TypeError:
                     print 'Fitness function returned invalid value'
                     raise
@@ -368,20 +382,21 @@ class CGP:
         return total*1000#+10000*(not con_filled)
 
     def printpool(self):
+        """Prints all circuits and their scores in the pool"""
         for f,c in self.pool:
             print f,c
         print
 
     def save_plot(self,circuit,i,log=True,name='',**kwargs):
-        v = circuit.evaluate(self.spice_commands[i])
+        v = circuit.evaluate(self.spice_commands[i])[1]
         #For every measurement in results
         for k in v.keys():
-            score = self._rank(v,i,k)
+            score = self._rank(v,i,k,extra=circuit.extra_value)
 
             plt.figure()
             freq = v[k][0]
             gain = v[k][1]
-            goal_val = [self.ff[i](c,k) for c in freq]
+            goal_val = [self.ff[i](c,k,circuit.extra_value) for c in freq]
             if self.plot_weight:
                 weight_val = [self.fitness_weight[i](c,k) for c in freq]
             if self.constraints[i]!=None and self.plot_constraints:
@@ -434,19 +449,19 @@ class CGP:
             elif k[0]=='i':
                 plt.ylabel("Output (A)")
 
-            plt.savefig('plot'+strftime("%Y-%m-%d %H:%M:%S")+'-'+k+'-'+name+'.png')
-            plt.clf()
+            plt.savefig(path_join(self.directory,strftime("%Y-%m-%d %H:%M:%S")+'-'+k+'-'+name+'.png'))
 
     def step(self):
         self.generation+=1
 
         def sf(pool):
-            #Select chromosomes from pool using weighted propablities
+            #Select chromosomes from pool using weighted probablities
             r=random.random()
             return random.choice(pool[:1+int(len(pool)*r)])[1]
 
         #Update best
         if self.elitism!=0:
+            #Pick self.elitism amount of best performing circuits to the next generation
             newpool=[self.pool[i][1] for i in xrange(self.elitism)]
         else:
             newpool=[]
@@ -460,7 +475,7 @@ class CGP:
         self.best=self.pool[0]
         self.history.append((self.generation,self.best[0],self.averagefit()))
 
-        #Choose self.elitism best chromosomes to next generation
+        #We have already chosen "self.elitism" of circuits in the new pool
         newsize=self.elitism
         while newsize<self.pool_size:
             newsize+=1
@@ -482,7 +497,6 @@ class CGP:
                     c.mutate()
             newpool.append(c)
         self.pool = self.rank_pool(newpool)
-        #self.pool=sorted([(self.rank(i),i) for i in newpool])
         if self.pool[0][0]<self.alltimebest[0]:
                 print strftime("%Y-%m-%d %H:%M:%S")
                 print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
@@ -493,6 +507,7 @@ class CGP:
 
 
     def averagefit(self):
+        """Returns average score of the whole pool."""
         return sum(i[0] for i in self.pool)/float(self.pool_size)
 
     def plotbest(self):
@@ -501,351 +516,18 @@ class CGP:
                 self.save_plot(
                         self.pool[0][1],
                         i=c,log=self.log_plot,name=str(c))
-        except ValueError:
+        except:
             print 'Plotting failed'
+            raise
 
-def gaussian(x,mean,std):
-    return math.exp(-(x-mean)**2/(2*std**2))
-
-def weight(x,center=100):
-    return 0.5+gaussian(x,100,30)
-
-def goal(freq):
-    return 5 if freq<2.5 else 0
-
-options=[
-"""
-.control
-dc Vin 4 10 0.1
-print v(n2)
-.endc
-$.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-$.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-.model 2N3906  PNP(Is=455.9E-18 Xti=3 Eg=1.11 Vaf=33.6 Bf=204 Ise=7.558f
-+               Ne=1.536 Ikf=.3287 Nk=.9957 Xtb=1.5 Var=100 Br=3.72
-+               Isc=529.3E-18 Nc=15.51 Ikr=11.1 Rc=.8508 Cjc=10.13p Mjc=.6993
-+               Vjc=1.006 Fc=.5 Cje=10.39p Mje=.6931 Vje=.9937 Tr=10n Tf=181.2p
-+               Itf=4.881m Xtf=.7939 Vtf=10 Rb=10, level=1)
-*
-*               Fairchild  pid=66   case=TO92
-*               11/19/2001 calccb update
-*$
-.model 2N3904   NPN(Is=6.734f Xti=3 Eg=1.11 Vaf=74.03 Bf=416.7 Ne=1.259
-+               Ise=6.734f Ikf=66.78m Xtb=1.5 Br=.7371 Nc=2 Isc=0 Ikr=0 Rc=1
-+               Cjc=3.638p Mjc=.3085 Vjc=.75 Fc=.5 Cje=4.493p Mje=.2593 Vje=.75
-+               Tr=239.5n Tf=301.2p Itf=.4 Vtf=4 Xtf=2 Rb=10, level=1)
-*               Fairchild        pid=23          case=TO92
-*               88-09-08 bam    creation
-.SUBCKT 1N4148 1 2
-*
-* The resistor R1 does not reflect
-* a physical device. Instead it
-* improves modeling in the reverse
-* mode of operation.
-*
-R1 1 2 5.827E+9
-D1 1 2 1N4148
-*
-.MODEL 1N4148 D
-+ IS = 4.352E-9
-+ N = 1.906
-+ BV = 110
-+ IBV = 0.0001
-+ RS = 0.6458
-+ CJO = 7.048E-13
-+ VJ = 0.869
-+ M = 0.03
-+ FC = 0.5
-+ TT = 3.48E-9
-.ENDS
-Vin n1 0
-rload n2 0 100k
-""",
-"""
-.control
-dc Vin 4.5 11 0.1
-print v(n2)
-print i(Vin)
-.endc
-.temp 60
-$.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-$.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-.model 2N3906  PNP(Is=455.9E-18 Xti=3 Eg=1.11 Vaf=33.6 Bf=204 Ise=7.558f
-+               Ne=1.536 Ikf=.3287 Nk=.9957 Xtb=1.5 Var=100 Br=3.72
-+               Isc=529.3E-18 Nc=15.51 Ikr=11.1 Rc=.8508 Cjc=10.13p Mjc=.6993
-+               Vjc=1.006 Fc=.5 Cje=10.39p Mje=.6931 Vje=.9937 Tr=10n Tf=181.2p
-+               Itf=4.881m Xtf=.7939 Vtf=10 Rb=10, level=1)
-*
-*               Fairchild  pid=66   case=TO92
-*               11/19/2001 calccb update
-*$
-.model 2N3904   NPN(Is=6.734f Xti=3 Eg=1.11 Vaf=74.03 Bf=416.7 Ne=1.259
-+               Ise=6.734f Ikf=66.78m Xtb=1.5 Br=.7371 Nc=2 Isc=0 Ikr=0 Rc=1
-+               Cjc=3.638p Mjc=.3085 Vjc=.75 Fc=.5 Cje=4.493p Mje=.2593 Vje=.75
-+               Tr=239.5n Tf=301.2p Itf=.4 Vtf=4 Xtf=2 Rb=10, level=1)
-*               Fairchild        pid=23          case=TO92
-*               88-09-08 bam    creation
-.SUBCKT 1N4148 1 2
-*
-* The resistor R1 does not reflect
-* a physical device. Instead it
-* improves modeling in the reverse
-* mode of operation.
-*
-R1 1 2 5.827E+9
-D1 1 2 1N4148
-*
-.MODEL 1N4148 D
-+ IS = 4.352E-9
-+ N = 1.906
-+ BV = 110
-+ IBV = 0.0001
-+ RS = 0.6458
-+ CJO = 7.048E-13
-+ VJ = 0.869
-+ M = 0.03
-+ FC = 0.5
-+ TT = 3.48E-9
-.ENDS
-Vin n1 0
-rload n2 0 100k
-""",
-"""
-.control
-dc Vin 3.5 9 0.1
-print v(n2)
-.endc
-.temp 45
-$.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-$.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-.model 2N3906  PNP(Is=455.9E-18 Xti=3 Eg=1.11 Vaf=33.6 Bf=204 Ise=7.558f
-+               Ne=1.536 Ikf=.3287 Nk=.9957 Xtb=1.5 Var=100 Br=3.72
-+               Isc=529.3E-18 Nc=15.51 Ikr=11.1 Rc=.8508 Cjc=10.13p Mjc=.6993
-+               Vjc=1.006 Fc=.5 Cje=10.39p Mje=.6931 Vje=.9937 Tr=10n Tf=181.2p
-+               Itf=4.881m Xtf=.7939 Vtf=10 Rb=10, level=1)
-*
-*               Fairchild  pid=66   case=TO92
-*               11/19/2001 calccb update
-*$
-.model 2N3904   NPN(Is=6.734f Xti=3 Eg=1.11 Vaf=74.03 Bf=416.7 Ne=1.259
-+               Ise=6.734f Ikf=66.78m Xtb=1.5 Br=.7371 Nc=2 Isc=0 Ikr=0 Rc=1
-+               Cjc=3.638p Mjc=.3085 Vjc=.75 Fc=.5 Cje=4.493p Mje=.2593 Vje=.75
-+               Tr=239.5n Tf=301.2p Itf=.4 Vtf=4 Xtf=2 Rb=10, level=1)
-*               Fairchild        pid=23          case=TO92
-*               88-09-08 bam    creation
-.SUBCKT 1N4148 1 2
-*
-* The resistor R1 does not reflect
-* a physical device. Instead it
-* improves modeling in the reverse
-* mode of operation.
-*
-R1 1 2 5.827E+9
-D1 1 2 1N4148
-*
-.MODEL 1N4148 D
-+ IS = 4.352E-9
-+ N = 1.906
-+ BV = 110
-+ IBV = 0.0001
-+ RS = 0.6458
-+ CJO = 7.048E-13
-+ VJ = 0.869
-+ M = 0.03
-+ FC = 0.5
-+ TT = 3.48E-9
-.ENDS
-Vin n1 0
-rload n2 0 10k
-""",
-"""
-.control
-tran 0.5n 250n
-print v(n2)
-.endc
-$.MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-$.MODEL QMOD2 PNP(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-.model 2N3906  PNP(Is=455.9E-18 Xti=3 Eg=1.11 Vaf=33.6 Bf=204 Ise=7.558f
-+               Ne=1.536 Ikf=.3287 Nk=.9957 Xtb=1.5 Var=100 Br=3.72
-+               Isc=529.3E-18 Nc=15.51 Ikr=11.1 Rc=.8508 Cjc=10.13p Mjc=.6993
-+               Vjc=1.006 Fc=.5 Cje=10.39p Mje=.6931 Vje=.9937 Tr=10n Tf=181.2p
-+               Itf=4.881m Xtf=.7939 Vtf=10 Rb=10, level=1)
-*
-*               Fairchild  pid=66   case=TO92
-*               11/19/2001 calccb update
-*$
-.model 2N3904   NPN(Is=6.734f Xti=3 Eg=1.11 Vaf=74.03 Bf=416.7 Ne=1.259
-+               Ise=6.734f Ikf=66.78m Xtb=1.5 Br=.7371 Nc=2 Isc=0 Ikr=0 Rc=1
-+               Cjc=3.638p Mjc=.3085 Vjc=.75 Fc=.5 Cje=4.493p Mje=.2593 Vje=.75
-+               Tr=239.5n Tf=301.2p Itf=.4 Vtf=4 Xtf=2 Rb=10, level=1)
-*               Fairchild        pid=23          case=TO92
-*               88-09-08 bam    creation
-.SUBCKT 1N4148 1 2
-*
-* The resistor R1 does not reflect
-* a physical device. Instead it
-* improves modeling in the reverse
-* mode of operation.
-*
-R1 1 2 5.827E+9
-D1 1 2 1N4148
-*
-.MODEL 1N4148 D
-+ IS = 4.352E-9
-+ N = 1.906
-+ BV = 110
-+ IBV = 0.0001
-+ RS = 0.6458
-+ CJO = 7.048E-13
-+ VJ = 0.869
-+ M = 0.03
-+ FC = 0.5
-+ TT = 3.48E-9
-.ENDS
-Vin n1 0 PULSE(0 10 10n 1n 1n 1 1)
-rload n2 0 100k
-"""
-]
-
-#Dictionary of the availabe parts
-parts = {'R':{'nodes':2,'value':1,'min':0,'max':7},
-         'C':{'nodes':2,'value':1,'min':-13,'max':-4},
-         #'L':{'nodes':2,'value':1,'min':-9,'max':-3},
-         #'D1':{'nodes':2,'spice':'1N4148'},
-         'Q1':{'nodes':3,'spice':'2N3906'},
-         'Q2':{'nodes':3,'spice':'2N3904'}
-         }
-
-
-def weight1(f):
-    n = 10**(-9)
-    if f<=81*n or f>(140*n):
-        return 1
-    if 120*n<=f<140*n:
-        return 1
-    if f>=190*n:
-        return 2
-    return 0.2
-
-def weight2(f):
-    n = 10**(-9)
-    if f<=31*n or f>(130*n):
-        return 1
-    if 110*n<=f<130*n:
-        return 1
-    if f>=180*n:
-        return 2
-    return 0.2
-
-def constraint1(f,x,k):
-    """f is Input, x is Output, k is the name of measurement"""
-    if k[0]=='i':
-        return x<0.01
-
-def constraint2(f,x):
-    n= 10**(-9)
-    if 0<=f<19*n:
-        if x>1 or x<-1:
-            return False
-    if 25*n<f<=28*n:
-        if x<3.5:
-            return False
-    if 110*n<f<=119*n or f>=140*n:
-        if x>1 or x<-1:
-            return False
-    if 125*n<=f<128*n:
-        if x>0.5:
-            return False
-    return True
-
-def goal1(f,k):
-    """k is the name of measurement. eq. v(n2)"""
-    if k=='v(n2)':
-        return 2.5
-    elif k[0]=='i':
-        return 0
-
-def goal2(f,k):
-    n= 10**(-9)
-    if 22*n<=f<=32*n:
-        return 5
-    #if 122*n<=f<=132*n:
-    #    return 5
-    return 0
-
-
-def transient_goal(f,k):
-    n = 10**(-9)
-    if f<=10*n:
-        return 0
-    else:
-        return 2.5
-
-if __name__ == "__main__":
-    resume = False
-    try:
-        r_file = open('.dump','r')
-        print "Do you want to resume Y/n:"
-        while True:
-            r = getch._Getch()()
-            if r=='':
-                resume = True
-                print "Resumed"
-                break
-            if r in ('y','Y','\n'):
-                resume = True
-                print "Resumed"
-                break
-            if r in ('n','N'):
-                break
-    except IOError:
-        pass
-
-    if not resume:
-        outfile = open('sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log','w')
-        e = CGP(pool_size=1000,
-                nodes=10,
-                parts_list=parts,
-                max_parts=14,
-                elitism=1,
-                mutation_rate=0.7,
-                crossover_rate=0.25,
-                fitnessfunction=[goal1,goal1,goal1,transient_goal],
-                fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':50},{'v(n2)':1},{'v(n2)':0.05}],
-                constraints=[None,None,None,None],
-                spice_sim_commands=options,
-                log=outfile,
-                plot_titles=[{'v(n2)':"Output voltage(V) 27C, 100k load"},{'v(n2)':"Output voltage(V) 60C, 100k load",'i(vin)':'Input current(A) 60C, 100k load'},{'v(n2)':'Output voltage(V) 50C, 10k load'},{'v(n2)':'10V Step response'}],
-                plot_yrange={'v(n2)':(1,4),'i(vin)':(-0.2,0.05)})
-    else:
-        #Resuming from file
-        e = pickle.load(r_file)
-        e.logfile = open(e.logfile,'a')
-        outfile = e.logfile
-    try:
-        while True:
-            e.step()
-            if e.generation%5==0:
-                print "Saving progress"
-                with open('.dump','w') as dump:
-                    try:
-                        e.logfile = outfile.name
-                        dump = open('.dump','w')#Save progress
-                        pickle.dump(e,dump)
-                        e.logfile = open(outfile.name,'a')
-                        print "Saving done"
-                    except:
-                        print "Error: Couldn't write output file"
-    except KeyboardInterrupt:
-        #Save space by erasing cache
-        print "Saving state..."
+def save_progress(cgp,out):
+    """Saves CGP pool,generation and log filename to file"""
+    #pickle format: (generation,pool,logfile)
+    with open(out,'w') as dump:
         try:
-            e.cache = {}
-            e.cache_size = 0
-            e.cache_hits = 0
-            #Files can't be pickled. So save filename and open it again when unpickling.
-            e.logfile = outfile.name
-            dump = open('.dump','w')
-            pickle.dump(e,dump)
-        except KeyboardInterrupt:
-            print "Saving state, please wait."
+            data = (cgp.generation,cgp.pool,cgp.logfile.name)
+            pickle.dump(data,dump)
+            print "Saving done"
+        except:
+            print "Error: Couldn't write output file"
+            raise
