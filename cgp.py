@@ -12,7 +12,7 @@ import getch
 from os.path import join as path_join
 inf = 1e12
 simulation_timeout = 0.5#seconds
-THREADS = 4
+THREADS = 8
 
 class Circuit_gene:
     """Represents a single component"""
@@ -232,7 +232,7 @@ class CGP:
         if len(self.spice_commands)>len(self.ff):
             raise Exception('Not enough fitness functions')
 
-        self.pool_size=pool_size+pool_size%THREADS
+        self.pool_size=pool_size-pool_size%THREADS+THREADS
         self.parts_list = parts_list
         self.generation=1
         self.elitism=elitism
