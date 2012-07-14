@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import circuits
 import random
 from copy import deepcopy
-from time import strftime
+from time import strftime,time
 import math
 import re
 import pickle
@@ -197,6 +197,7 @@ class CGP:
                 print 'Temperature specified in simulation'
                 self.temperatures = True
                 #TODO write the current temperature in the plot
+        print
 
         self.cache_hits = 0
         self.cache = {}
@@ -241,9 +242,6 @@ class CGP:
         self.logfile = log
         if not resumed:
             log.write("Spice simulation command:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
-
-        #Create pool of random circuits
-        if not resumed:
             temp=[Chromosome(max_parts,parts_list,nodes,extra_value=extra_value) for i in xrange(self.pool_size)]
             self.pool = self.rank_pool(temp)
             #self.pool=sorted([ (self.rank(c),c) for c in temp])
@@ -255,6 +253,7 @@ class CGP:
 
         #Directory to save files in
         self.directory = directory
+
 
 
     def parse_sim_options(self,option):
@@ -500,7 +499,10 @@ class CGP:
                     tries+=1
                     c.mutate()
             newpool.append(c)
+        start = time()
         self.pool = self.rank_pool(newpool)
+        print "Simulations per second: {}".format((len(self.spice_commands)*self.pool_size)/(time()-start))
+        print "Time per generation: {}".format(start-time())
         if self.pool[0][0]<self.alltimebest[0]:
                 print strftime("%Y-%m-%d %H:%M:%S")
                 print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
