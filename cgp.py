@@ -291,7 +291,10 @@ class CGP:
                 for thread in threads:
                     thread.join(simulation_timeout)
                     if thread.is_alive():
-                        thread.spice.terminate()
+                        try:
+                            thread.spice.terminate()
+                        except OSError:#Thread died before we could kill it
+                            pass
                         thread.join()
 
                 for e,thread in enumerate(threads):
