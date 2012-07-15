@@ -82,6 +82,8 @@ class Chromosome:
         self.extra_range = extra_value
         if extra_value!=None:
             self.extra_value = random.uniform(*self.extra_range)
+        else:
+            self.extra_value = None
 
     def __repr__(self):
         return str(self.elements)
@@ -356,6 +358,7 @@ class CGP:
         #I don't know why, so I just check if spice returned the whole range
         if y<0.99*self.frange[i]:
             return inf
+
         con_filled = True
         if self.log_plot[i]:
             for p in xrange(1,len(f)):
@@ -404,7 +407,7 @@ class CGP:
             plt.figure()
             freq = v[k][0]
             gain = v[k][1]
-            goal_val = [self.ff[i](c,k,circuit.extra_value) for c in freq]
+            goal_val = [self.ff[i](c,k,extra=circuit.extra_value) for c in freq]
             if self.plot_weight:
                 weight_val = [self.fitness_weight[i](c,k) for c in freq]
             if self.constraints[i]!=None and self.plot_constraints:
@@ -440,11 +443,10 @@ class CGP:
             if self.sim_type[i]=='tran':
                 plt.xlabel("Time (s)")
 
-            if self.plot_titles!=None:
-                try:
-                    plt.title(self.plot_titles[i][k])
-                except:
-                    plt.tile(k)
+            try:
+                plt.title(self.plot_titles[i][k])
+            except:
+                plt.title(k)
 
             plt.annotate('Generation '+str(self.generation),xy=(0.05,0.95),xycoords='figure fraction')
             if score!=None:
