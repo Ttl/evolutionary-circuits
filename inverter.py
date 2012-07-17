@@ -175,6 +175,7 @@ if __name__ == "__main__":
             if r in ('n','N'):
                 break
     except IOError:
+        print 'No save file found'
         pass
 
     if resume:
@@ -184,7 +185,7 @@ if __name__ == "__main__":
     else:
         outfile = open(path_join(title,'sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log'),'w')
 
-    e = CGP(pool_size=4000,
+    e = CGP(pool_size=400,
             nodes=16,
             parts_list=parts,
             max_parts=18,
@@ -193,7 +194,7 @@ if __name__ == "__main__":
             crossover_rate=0.2,
             fitnessfunction=[goalinv,transient_goal_inv,transient_goal_inv2],
             fitness_weight=[{'v(n2)':10,'i(vc)':20,'i(vin)':20},{'v(n2)':2},{'v(n2)':2}],
-            extra_value=(0.7,4.3),#This is used as transition value
+            extra_value=[(0.7,4.3)],#This is used as transition value
             constraints=[None,None,None],
             spice_sim_commands=options,
             log=outfile,

@@ -5,33 +5,26 @@ import circuits
 import random
 from copy import deepcopy
 from time import strftime,time
-import math
 import re
 import pickle
 import getch
 from os.path import join as path_join
+import os
 inf = 1e12
 simulation_timeout = 0.5#seconds
-THREADS = 8
+THREADS = 4
 
 class Circuit_gene:
     """Represents a single component"""
     def __init__(self,name,nodes,*args):
-        #Spice name(eg. for resistor: "R")
-        self.spice_name = name
         #Name of the component(eg. "R1")
-        self.name = name+str(id(self))
+        self.spice_name = name
         #N-tuple of values
         self.values = args
         self.spice_options = ' '.join(map(str,*args))
         self.nodes = nodes
-        self.nodesstr = ' '.join(map(str,nodes))
-
     def __repr__(self):
-        return self.name+' '+self.nodesstr+' '+self.spice_options
-
-    def spice(self):
-        return self.name+' '+self.nodesstr+' '+self.spice_options
+        return self.spice_name+str(id(self))+' '+' '.join(map(str,self.nodes))+' '+self.spice_options
 
 
 def log_dist(a,b):
@@ -42,11 +35,12 @@ def same(x):
     #True if all elements are same
     return reduce(lambda x,y:x==y,x)
 
-def random_element(parts,node_list):
+def random_element(parts,nodes):
     #Return random circuit element from parts list
     name = random.choice(parts.keys())
     part = parts[name]
     spice_line = []
+    node_list = ['n'+str(i) for i in xrange(nodes)]+['0']
     if 'value' in part.keys():
         maxval = part['max']
         minval = part['min']
@@ -74,14 +68,13 @@ class Chromosome:
         #Maximum number of components in circuit
         self.max_parts = max_parts
         #List of nodes
-        self.nodes = ['n'+str(i) for i in xrange(nodes)]
-        self.nodes.append('0')#Add ground node
+        self.nodes = nodes
         self.parts_list = parts_list
         #Generates randomly a circuit
         self.elements = [random_element(self.parts_list,self.nodes) for i in xrange(random.randint(1,max_parts/2))]
         self.extra_range = extra_value
         if extra_value!=None:
-            self.extra_value = random.uniform(*self.extra_range)
+            self.extra_value = [random.uniform(*i) for i in self.extra_range]
         else:
             self.extra_value = None
 
@@ -115,14 +108,15 @@ class Chromosome:
         elif m==5:
             #Change the extra_value
             if self.extra_range!=None:
-                self.extra_value = random.uniform(*self.extra_range)
+                i = random.randint(0,len(self.extra_value)-1)
+                self.extra_value[i] = random.uniform(*self.extra_range[i])
 
     def spice_input(self,options):
         """Generate the input to SPICE"""
         global simulatiion_timeout
         program = options+'\n'
         for i in self.elements:
-            program+=i.spice()+'\n'
+            program+=str(i)+'\n'
         #FIXME, this shouldn't be hard coded
         #We should read from the spice commands all the
         #printed nodes
@@ -308,21 +302,25 @@ class CGP:
                         lasterror = thread.result[0]
                     else:
                         results[THREADS*t+e][i] = thread.result[1]
+                        thread.result = None
+                del threads
             if errors == self.pool_size:
                 #All simulations failed
                 raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
 
-        new_pool = [None for i in xrange(self.pool_size)]
+        #new_pool = [None for i in xrange(self.pool_size)]
         for t in xrange(self.pool_size):
-            new_pool[t] = [0,pool[t]]#(Score, Circuit)
+            #new_pool[t] = [0,pool[t]]#(Score, Circuit)
+            pool[t]=[0,pool[t]]
             for i in xrange(len(self.spice_commands)):
                 if results[t][i]==None or len(results[t][i].keys())==0:
-                    new_pool[t][0]=inf
+                    pool[t][0]=inf
                     continue
                 for k in results[t][i].keys():
-                    new_pool[t][0]+=self._rank(results[t][i],i,k,extra=pool[t].extra_value)
+                    pool[t][0]+=self._rank(results[t][i],i,k,extra=pool[t][1].extra_value)
+            pool[t]=tuple(pool[t])#Make immutable for reduction in memory
 
-        return sorted(new_pool)
+        return sorted(pool)
 
     def _rank(self,x,i,k,extra=None,c=None):
         """Score of single circuit against single fitness function
@@ -351,14 +349,20 @@ class CGP:
         if constraint == None:
             constraint = lambda f,x,k : 0
 
-        f = x[k][0]#Input
-        v = x[k][1]#Output
-        y = float(max(f))
+        try:
+            f = x[k][0]#Input
+            v = x[k][1]#Output
+            y = float(max(f))
+        except:
+            return inf
         #Sometimes spice doesn't simulate whole frequency range
         #I don't know why, so I just check if spice returned the whole range
         if y<0.99*self.frange[i]:
             return inf
 
+        if k=='v(n2)':
+            f=f[int(len(f)*0.66):]
+            v=v[int(len(v)*0.66):]
         con_filled = True
         if self.log_plot[i]:
             for p in xrange(1,len(f)):
@@ -375,7 +379,7 @@ class CGP:
             for p in xrange(1,len(f)):
                 try:
                     #total+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
-                    total+=weight( f[p] )*(f[p]-f[p-1])*( func(f[p],k,extra) - v[p] )**2
+                    total+=weight( f[p] )*(f[p]-f[p-1])*( func(f[p],k,extra=extra) - v[p] )**2
                 except TypeError:
                     print 'Fitness function returned invalid value'
                     raise
@@ -506,6 +510,7 @@ class CGP:
             newpool.append(c)
         start = time()
         self.pool = self.rank_pool(newpool)
+
         print "Simulations per second: {}".format(round((len(self.spice_commands)*self.pool_size)/(time()-start),1))
         print "Time per generation: {} seconds".format(round(time()-start,1))
         if self.pool[0][0]<self.alltimebest[0]:
@@ -530,27 +535,28 @@ class CGP:
                         i=c,log=self.log_plot,name=str(c))
         except:
             print 'Plotting failed'
-            raise
 
     def run(self):
         try:
             while True:
                 self.step()
-                if self.generation%5==0:
-                    print "Saving progress"
-                    self.save_progress(path_join(self.directory,'.dump'))
+                print "Saving progress"
+                self.save_progress(path_join(self.directory,'.dump'))
         except KeyboardInterrupt:
-            #Save space by erasing cache
             print "Saving state..."
             self.save_progress(path_join(self.directory,'.dump'))
 
     def save_progress(self,out):
         """Saves CGP pool,generation and log filename to file"""
         #pickle format: (generation,pool,logfile)
-        with open(out,'w') as dump:
-            try:
-                data = (self.generation,self.pool,self.logfile.name)
-                pickle.dump(data,dump)
-                print "Saving done"
-            except:
-                print "Error: Couldn't write output file"
+        out_temp=out+'.tmp'
+
+        with open(out_temp,'w') as dump:
+            data = (self.generation,self.pool,self.logfile.name)
+            pickle.dump(data,dump)
+            print "Saving done"
+        try:
+            os.remove(out)
+        except OSError:
+            pass#First time saving and file doesn't exist yet
+        os.rename(out_temp,out)

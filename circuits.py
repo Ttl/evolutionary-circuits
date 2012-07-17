@@ -10,11 +10,12 @@ def parse_output(output):
         temp=output[line].replace(',','').split()
         if len(temp)>0:
             if temp[0]=='Index':
-                temp2=output[line+2].replace(',','').split()
-                if float(temp2[0])<index:
-                    current = temp[2]
-                    value[temp[2]]=([],[])
-                    index=0
+                if line+2<len(output):
+                    temp2=output[line+2].replace(',','').split()
+                    if float(temp2[0])<index:
+                        current = temp[2]
+                        value[temp[2]]=([],[])
+                        index=0
 
         if len(temp)>2 and current!=():
             try:
