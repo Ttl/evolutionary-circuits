@@ -360,9 +360,6 @@ class CGP:
         if y<0.99*self.frange[i]:
             return inf
 
-        if k=='v(n2)':
-            f=f[int(len(f)*0.66):]
-            v=v[int(len(v)*0.66):]
         con_filled = True
         if self.log_plot[i]:
             for p in xrange(1,len(f)):
