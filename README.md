@@ -5,8 +5,8 @@ Automatically generates analog circuits using evolutionary algorithms.
 
 Requires ngspice. Also probably only works on a linux OS.
 
-Interesting stuff happens on cgp.py. circuits.py is used to communicate with
-ngspice, plot.py is not used by program but it can be used to plot outputs of
+Interesting stuff happens in cgp.py, circuits.py is used to communicate with
+ngspice, plot.py is not used by the program but it can be used to plot outputs of
 ngspice. getch.py gets a single character from output.
 
 Work is currently very much in progress and documentation is missing. This is
@@ -19,8 +19,8 @@ without losing progress.
 
 ##ngspice
 
-Download [ngpspice](http://ngspice.sourceforge.net/) either git version or the
-current stable, whichever you want.
+Download [ngpspice](http://ngspice.sourceforge.net/) either the git version or the
+current stable release, whichever you want.
 
 Compile and install ngspice with following commands:
 
@@ -32,11 +32,11 @@ Compile and install ngspice with following commands:
 
 #Usage
 
-Currently program is used by changing simulation parameters in cgp.py file, but
-hopefully current simulation options are moved to a different file soon.
+Currently the program is used by setting simulation parameters in a seperate python file, and importing cgp.py. 
+(See inverter.py an an example.)  
 
-First you need to decide what components do you want to allow and add them to
-the "parts" dictionary. Dictionary key is the name of component in SPICE, value
+First you need to decide what components you want to allow and add them to
+the "parts" dictionary. The dictionary key is the name of component in SPICE, and the value
 should be an another dictionary with contents:
     
     'nodes': Number of leads in the component
@@ -49,14 +49,15 @@ should be an another dictionary with contents:
     'spice': Extra options for spice. This is appended to the end of components
     description in spice. This is used for example transistors model.
 
-Then you need SPICE simulation commands and part models. They should be strings
+Next you need SPICE simulation commands and part models. They should be strings
 in a list. Every item in list is a new spice simulation. Currently ouput node is
 hard coded to be 'n2' and the ground node is always 0. Add "print v(n2)" or "print i(n2)" in the spice commands to
 get an output to the program. You can print more than one measurement from one
 spice simulation.
 
-Example: spice DC simulation that sweep Vin power supply from 0V to
-10V with a step of 0.1V and also has a one fixed load resistance and 100ns long transient simulation to a step response. Both simulations include QMOD and QMOD2 transistor models:
+Example: a SPICE DC simulation that sweeps the Vin power supply from 0V to
+10V with a step of 0.1V and also has a fixed load resistance and a 100ns long transient simulation step response. 
+Both simulations include QMOD and QMOD2 transistor models:
 
     options="""
     .control
@@ -77,8 +78,8 @@ Example: spice DC simulation that sweep Vin power supply from 0V to
     rload n2 0 100k
     """
 
-Other settings you should specify are a list of fitness functions. These are
-functions that evolved circuits are the goals of the simulation.
+Other settings you should specify are a list of fitness functions. These are Python
+functions that measure how well the evolved circuits meet the goals of the simulation.
 
 For example a 1V/1A constant fitness function:
 
@@ -87,7 +88,7 @@ For example a 1V/1A constant fitness function:
         simulation. k is the name of node being measured"""
         return 1
 
-Another fitness function if spice simualtion has more than one measurement. This
+Another fitness function: A spice simualtion with more than one measurement. This
 example has a current and voltage measurements:
 
     def goal(v,k):
@@ -106,7 +107,7 @@ Fitness weights are either constants that scores are multiplied with, or
 functions that invidual values of spice simulation are weighted with if you want
 to for example weight some part of the results higher than other parts. They
 should be in list of dictionaries where number of elements in list is same as
-number of spice simulations. nth element is used with nth spice simulation. Keys
+number of spice simulations. The nth element is used with nth spice simulation. Keys
 of the dictionaries are names of measurements(eg. 'v(n2)') and values are
 weights.
 
@@ -132,4 +133,4 @@ Other options that should be specified:
     keys and tuple of (min,max) as values.
 
 
-See the bottom of "cgp.py" for examples.
+See the bottom of "inverter.py" for examples.
