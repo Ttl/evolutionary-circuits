@@ -345,10 +345,6 @@ class CGP:
             c = weight
             weight = lambda x:float(c)#Make a constant anonymous function
 
-        constraint = self.constraints[i]
-        if constraint == None:
-            constraint = lambda f,x,k : 0
-
         try:
             f = x[k][0]#Input
             v = x[k][1]#Output
@@ -361,11 +357,12 @@ class CGP:
             return inf
 
         con_filled = True
+        con_penalty=0
         if self.log_plot[i]:
             for p in xrange(1,len(f)):
                 #Divided by frequency for even scores across whole frequency range in log scale.
                 try:
-                    total+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k,extra)+func(f[p-1],k,extra) - x[1][p] - x[1][p-1])**2)/x[0][p]
+                    total+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k,extra=extra)+func(f[p-1],k,extra=extra) - x[1][p] - x[1][p-1])**2)/x[0][p]
                 except TypeError:
                     print 'Fitness function returned invalid value'
                     raise
@@ -383,15 +380,23 @@ class CGP:
                 except OverflowError:
                     total=inf
                     pass
-                if not constraint( f[p],v[p],k ):
-                    con_filled=False
+                if self.constraints[i]!=None:
+                    con=self.constraints[i]( f[p],v[p],k,extra=extra,generation=self.generation )
+                    if con==None:
+                        print 'Constraint function {} return None'.format(i)
+                    if con==False:
+                        con_penalty+=100
+                        con_filled=False
 
             total/=y
         if total<0:
             return inf
         #FIXME constraints don't really work anymore after adding multiple measurement per simulation
         #Constraints are still assigned per simulation, not per measurement
-        return total*1000#+10000*(not con_filled)
+        if con_penalty>1e5:
+            con_penalty=1e5
+        total+=con_penalty
+        return total*1000+10000*(not con_filled)
 
     def printpool(self):
         """Prints all circuits and their scores in the pool"""
@@ -408,11 +413,11 @@ class CGP:
             plt.figure()
             freq = v[k][0]
             gain = v[k][1]
-            goal_val = [self.ff[i](c,k,extra=circuit.extra_value) for c in freq]
+            goal_val = [self.ff[i](f,k,extra=circuit.extra_value,generation=self.generation) for f in freq]
             if self.plot_weight:
                 weight_val = [self.fitness_weight[i](c,k) for c in freq]
             if self.constraints[i]!=None and self.plot_constraints:
-                constraint_val = [not self.constraints[i](freq[c],gain[c],k) for c in xrange(len(freq))]
+                constraint_val = [not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation) for c in xrange(len(freq))]
             if log==True:#Logarithmic plot
                 plt.semilogx(freq,gain,'g',basex=10)
                 plt.semilogx(freq,goal_val,'b',basex=10)
@@ -425,8 +430,9 @@ class CGP:
                 plt.plot(freq,goal_val,'b')
                 if self.plot_weight:
                     plt.plot(freq,weight_val,'r--')
-                if self.constraints[i]!=None and self.plot_constraints:
-                    plt.plot(freq,constraint_val,'m')
+                #FIXME: Need a better way to plot constraints
+                #if self.constraints[i]!=None and self.plot_constraints:
+                #    plt.plot(freq,constraint_val,'m')
 
             # update axis ranges
             ax = []
@@ -512,6 +518,7 @@ class CGP:
         print "Time per generation: {} seconds".format(round(time()-start,1))
         if self.pool[0][0]<self.alltimebest[0]:
                 print strftime("%Y-%m-%d %H:%M:%S")
+                print 'Extra values: '+str(self.pool[0][1].extra_value)
                 print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
                 #print 'Cache size: %d/%d'%(self.cache_size,self.cache_max_size)+', Cache hits',self.cache_hits
                 self.alltimebest=self.pool[0]
@@ -532,6 +539,7 @@ class CGP:
                         i=c,log=self.log_plot,name=str(c))
         except:
             print 'Plotting failed'
+            raise
 
     def run(self):
         try:
