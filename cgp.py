@@ -391,8 +391,6 @@ class CGP:
             total/=y
         if total<0:
             return inf
-        #FIXME constraints don't really work anymore after adding multiple measurement per simulation
-        #Constraints are still assigned per simulation, not per measurement
         if con_penalty>1e5:
             con_penalty=1e5
         total+=con_penalty
@@ -483,7 +481,7 @@ class CGP:
         else:
             newpool=[]
 
-        #FIXME constraints still don't work
+        #FIXME this should be enabled or disabled in the simulation settings
         #if (not self.constraints_filled) and (self.alltimebest[0]<10000):
         #    print 'Constraint filling solution found'
         #    print 'Optimizing for number of elements'
