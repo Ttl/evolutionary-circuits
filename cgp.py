@@ -110,6 +110,8 @@ class Chromosome:
             if self.extra_range!=None:
                 i = random.randint(0,len(self.extra_value)-1)
                 self.extra_value[i] = random.uniform(*self.extra_range[i])
+            else:
+                self.mutate()
 
     def spice_input(self,options):
         """Generate the input to SPICE"""
@@ -117,19 +119,12 @@ class Chromosome:
         program = options+'\n'
         for i in self.elements:
             program+=str(i)+'\n'
-        #FIXME, this shouldn't be hard coded
-        #We should read from the spice commands all the
-        #printed nodes
-        if ' n2 ' not in program:
-            return None
         return program
 
     def evaluate(self,options):
         """Used in plotting, when only 1 circuits needs to be simulated"""
         program = self.spice_input(options)
-        if ' n2 ' not in program:
-            return None
-        thread = circuits.spice_thread(self.spice_input(options))
+        thread = circuits.spice_thread(program)
         thread.start()
         thread.join(simulation_timeout)
         return thread.result
@@ -210,6 +205,9 @@ class CGP:
         self.ff=fitnessfunction
         self.constraints = constraints
         self.constraints_filled = False
+        self.nodes = nodes
+        self.max_parts = max_parts
+        self.extra_value = extra_value
 
         #FIXME weight function plotting is currently disabled
         self.plot_weight=False
@@ -230,19 +228,14 @@ class CGP:
 
         self.pool_size=pool_size-pool_size%THREADS+THREADS
         self.parts_list = parts_list
-        self.generation=1
+        self.generation=0
         self.elitism=elitism
         self.alltimebest=(float('inf'),float('inf'))
         self.mrate = mutation_rate
         self.crate = crossover_rate
         self.logfile = log
         if not resumed:
-            log.write("Spice simulation command:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
-            temp=[Chromosome(max_parts,parts_list,nodes,extra_value=extra_value) for i in xrange(self.pool_size)]
-            self.pool = self.rank_pool(temp)
-            #self.pool=sorted([ (self.rank(c),c) for c in temp])
-            del temp
-            self.best=(self.generation,self.pool[0])
+            log.write("Spice simulation commands:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
 
         self.plot_titles = plot_titles
         self.plot_yrange = plot_yrange
@@ -279,38 +272,50 @@ class CGP:
         lasterror = None
         for i in xrange(len(self.spice_commands)):
             errors = 0
+            skipped = 0
             for t in xrange(self.pool_size/THREADS):
 
-                threads = [circuits.spice_thread(a.spice_input(self.spice_commands[i])) for a in pool[t*THREADS:t*THREADS+THREADS]]
-                for thread in threads:
-                    thread.start()
-                for thread in threads:
-                    thread.join(simulation_timeout)
-                    if thread.is_alive():
-                        try:
-                            thread.spice.terminate()
-                        except OSError:#Thread died before we could kill it
-                            pass
-                        thread.join()
+                threads = []
+                for e,a in enumerate(pool[t*THREADS:t*THREADS+THREADS]):
+                    if i==0 or results[THREADS*t+e][i-1]!=None:
+                        threads.append(circuits.spice_thread(a.spice_input(self.spice_commands[i])))
+                    else:
+                        threads.append(None)
 
                 for e,thread in enumerate(threads):
-                    if thread.result==None:
-                        errors+=1
-                        lasterror = "Simulation timedout"
-                    elif thread.result[1]=={}:
-                        errors+=1
-                        lasterror = thread.result[0]
+                    if i==0 or results[THREADS*t+e][i-1]!=None:
+                        thread.start()
+                for e,thread in enumerate(threads):
+                    if i==0 or results[THREADS*t+e][i-1]!=None:
+                        thread.join(simulation_timeout)
+                        if thread.is_alive():
+                            try:
+                                thread.spice.terminate()
+                            except OSError:#Thread died before we could kill it
+                                pass
+                            thread.join()
+
+                for e,thread in enumerate(threads):
+                    if i>0 and results[THREADS*t+e][i-1]==None:
+                        skipped+=1
+                        results[THREADS*t+e][i] = None
                     else:
-                        results[THREADS*t+e][i] = thread.result[1]
-                        thread.result = None
+                        if thread.result==None:
+                            errors+=1
+                            lasterror = "Simulation timedout"
+                        elif thread.result[1]=={}:
+                            errors+=1
+                            lasterror = thread.result[0]
+                        else:
+                            results[THREADS*t+e][i] = thread.result[1]
+                            thread.result = None
                 del threads
-            if errors == self.pool_size:
+            #print 'Skipped: {}'.format(skipped)
+            if errors + skipped == self.pool_size:
                 #All simulations failed
                 raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
 
-        #new_pool = [None for i in xrange(self.pool_size)]
         for t in xrange(self.pool_size):
-            #new_pool[t] = [0,pool[t]]#(Score, Circuit)
             pool[t]=[0,pool[t]]
             for i in xrange(len(self.spice_commands)):
                 if results[t][i]==None or len(results[t][i].keys())==0:
@@ -367,12 +372,11 @@ class CGP:
                     print 'Fitness function returned invalid value'
                     raise
 
-                if not constraint( f[p],v[p],k ):
+                if not self.constraints[i]( f[p],v[p],k ):
                     con_filled=False
         else:
             for p in xrange(1,len(f)):
                 try:
-                    #total+=weight( (f[p]-f[p-1])/2 )*(f[p]-f[p-1])*( func(f[p],k) + func(f[p-1],k) - v[p] - v[p-1] )**2
                     total+=weight( f[p] )*(f[p]-f[p-1])*( func(f[p],k,extra=extra) - v[p] )**2
                 except TypeError:
                     print 'Fitness function returned invalid value'
@@ -383,7 +387,7 @@ class CGP:
                 if self.constraints[i]!=None:
                     con=self.constraints[i]( f[p],v[p],k,extra=extra,generation=self.generation )
                     if con==None:
-                        print 'Constraint function {} return None'.format(i)
+                        print 'Constraint function {} return None, for input: ({},{},{},extra={},generation={})'.format(i,f[p],v[p],k,extra,self.generation)
                     if con==False:
                         con_penalty+=100
                         con_filled=False
@@ -475,42 +479,47 @@ class CGP:
             return random.choice(pool[:1+int(len(pool)*r)])[1]
 
         #Update best
-        if self.elitism!=0:
-            #Pick self.elitism amount of best performing circuits to the next generation
-            newpool=[self.pool[i][1] for i in xrange(self.elitism)]
+        if self.generation==1:
+            #Randomly generate some circuits
+            newpool=[Chromosome(self.max_parts,self.parts_list,self.nodes,extra_value=self.extra_value) for i in xrange(self.pool_size)]
         else:
-            newpool=[]
+            if self.elitism!=0:
+                #Pick self.elitism amount of best performing circuits to the next generation
+                newpool=[self.pool[i][1] for i in xrange(self.elitism)]
+            else:
+                newpool=[]
 
-        #FIXME this should be enabled or disabled in the simulation settings
-        #if (not self.constraints_filled) and (self.alltimebest[0]<10000):
-        #    print 'Constraint filling solution found'
-        #    print 'Optimizing for number of elements'
-        #    self.constraints_filled = True
-        self.best=self.pool[0]
+            #FIXME this should be enabled or disabled in the simulation settings
+            #if (not self.constraints_filled) and (self.alltimebest[0]<10000):
+            #    print 'Constraint filling solution found'
+            #    print 'Optimizing for number of elements'
+            #    self.constraints_filled = True
+            self.best=self.pool[0]
 
-        #We have already chosen "self.elitism" of circuits in the new pool
-        newsize=self.elitism
-        while newsize<self.pool_size:
-            newsize+=1
-            c=deepcopy(sf(self.pool))   #selected chromosome
-            if random.random()<=self.crate:#crossover
-                d=sf(self.pool)
-                l = max(len(c.elements),len(d.elements))
-                r1 = random.randint(0,l)
-                r2 = random.randint(0,l)
-                if r1>r2:
-                    r1,r2=r2,r1
-                c.elements = c.elements[:r1]+d.elements[r1:r2]+c.elements[r2:]
+            #We have already chosen "self.elitism" of circuits in the new pool
+            newsize=self.elitism
+            while newsize<self.pool_size:
+                newsize+=1
+                c=deepcopy(sf(self.pool))   #selected chromosome
+                if random.random()<=self.crate:#crossover
+                    d=sf(self.pool)
+                    l = max(len(c.elements),len(d.elements))
+                    r1 = random.randint(0,l)
+                    r2 = random.randint(0,l)
+                    if r1>r2:
+                        r1,r2=r2,r1
+                    c.elements = c.elements[:r1]+d.elements[r1:r2]+c.elements[r2:]
 
-            if random.random()<=self.mrate:#mutation
-                c.mutate()
-                tries=0
-                while random.random()<=self.mrate and tries<10:
-                    tries+=1
+                if random.random()<=self.mrate:#mutation
                     c.mutate()
-            newpool.append(c)
+                    tries=0
+                    while random.random()<=self.mrate and tries<10:
+                        tries+=1
+                        c.mutate()
+                newpool.append(c)
         start = time()
         self.pool = self.rank_pool(newpool)
+
 
         print "Simulations per second: {}".format(round((len(self.spice_commands)*self.pool_size)/(time()-start),1))
         print "Time per generation: {} seconds".format(round(time()-start,1))
