@@ -7,7 +7,6 @@ from copy import deepcopy
 from time import strftime,time
 import re
 import pickle
-import getch
 from os.path import join as path_join
 import os
 inf = 1e12
@@ -174,11 +173,17 @@ class CGP:
     spice_sim_commands,
     log,
     directory='',
+    common='',
+    models='',
     resumed=False,
     extra_value=None,
     plot_titles=None,
     plot_yrange=None):
-        self.spice_commands=spice_sim_commands
+
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        self.spice_commands=[i+common+models for i in spice_sim_commands]
         sim = map(self.parse_sim_options,self.spice_commands)
 
         print strftime("%Y-%m-%d %H:%M:%S")
