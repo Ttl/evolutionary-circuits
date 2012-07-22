@@ -4,6 +4,8 @@ import getch
 
 title = 'Inverter2012-07-22'
 
+if not os.path.exists(title):
+    os.makedirs(title)
 
 
 #Put SPICE device models used in the simulations here.

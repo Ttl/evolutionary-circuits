@@ -180,8 +180,6 @@ class CGP:
     plot_titles=None,
     plot_yrange=None):
 
-        if not os.path.exists(directory):
-            os.makedirs(directory)
 
         self.spice_commands=[i+common+models for i in spice_sim_commands]
         sim = map(self.parse_sim_options,self.spice_commands)
