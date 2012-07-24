@@ -32,13 +32,55 @@ Compile and install ngspice with following commands:
 
 #Usage
 
-Currently the program is used by setting simulation parameters in a seperate python file, and importing cgp.py. 
-(See inverter.py an an example.)  
+The program is used by saving simulation settings in separate file and
+running it with command: "python cgp.py <filename of settings>". See inverter.py
+for example settings.
+
+##Simulation settings
+
+Every name starting with underscore("\_") is ignored and they can be used for
+internal functions in settings file.
+
+Required settings are:
+* title: Title of the simulation, this will be the name of the folder where
+  output is placed.
+* max\_parts: Maximum number of devices allowed.
+* spice\_commands: SPICE simulation commands, can be string if there is only one
+  simulation or list of string for more than one simulation.
+* parts: A dictionary of available parts.
+* fitness\_function: The goal function, that circuits are ranked against.
+
+Optional settings are:
+* common: Common constructs in SPICE simulation, eg. input resistance, output
+  load...
+* models: String of SPICE models.
+* constraints: One function or a list of functions for constraints. Some entries
+  in list can be None. Length of list must equal the number of SPICE
+  simulations.
+* population: Number of circuits in one generation. Default is 1000.
+* nodes: Number of nodes where parts can be attached. Default is same as
+  max\_parts.
+* elitism: Number of circuits copied straight into a new generation. Default is
+  1.
+* mutation\_rate: Probability of mutations. Default is 0.7.
+* crossover\_rate: Probability of crossovers. Default is 0.2.
+* fitness\_weight: List of dictionaries. One list elements corresponds to one
+  SPICE simulation. Dictionary keys are measurements('v(n2)','i(n1')...), and
+  values are the weights the measurement is multiplied. Value can also be
+  a function that takes input value and returns a number.
+* extra\_value: List of tuples that are minimum and maximum of extra values that chromosome can hold. This is returned
+  to fitness function as argument extra\_value. This can be used as example for
+  transition voltage of an inverter.
+* log: Filename where simulation log is saved.
+* plot\_titles: List of dictionaries of plot titles.
+* plot\_yrange: List of dictionaries of plot Y-axis ranges. Can be useful if you
+  turn the output plots into an animation, this avoids the rescaling of the
+  axes.
 
 First you need to decide what components you want to allow and add them to
 the "parts" dictionary. The dictionary key is the name of component in SPICE, and the value
 should be an another dictionary with contents:
-    
+
     'nodes': Number of leads in the component
     'value': True/False, component has a value(Example: True for resistors and
     capacitors, their values are resistance and capacitance.
@@ -49,62 +91,45 @@ should be an another dictionary with contents:
     'spice': Extra options for spice. This is appended to the end of components
     description in spice. This is used for example transistors model.
 
-Next you need SPICE simulation commands and part models. They should be strings
-in a list. Every item in list is a new spice simulation. Currently ouput node is
-hard coded to be 'n2' and the ground node is always 0. Add "print v(n2)" or "print i(n2)" in the spice commands to
-get an output to the program. You can print more than one measurement from one
-spice simulation.
+Next you need SPICE simulation commands and a optional part models. Ground node is hard coded in SPICE to be 0.
 
-Example: a SPICE DC simulation that sweeps the Vin power supply from 0V to
-10V with a step of 0.1V and also has a fixed load resistance and a 100ns long transient simulation step response. 
-Both simulations include QMOD and QMOD2 transistor models:
+Add "print <value>"(eg. "print v(n2)" or "print i(n2)") in the spice commands to get an output to the program. You can print more than one measurement from one spice simulation.
 
-    options="""
-    .control
-    dc Vin 0 10 0.1
-    print v(n2)
-    .endc
-    .MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-    Vin n1 0
-    rload n2 0 100k
-    """,
-    """
-    .control
-    tran 0.5n 200n
-    print v(n2)
-    .endc
-    .MODEL QMOD NPN(BF=100 CJC=20pf CJE=20pf IS=1E-16)
-    Vin n1 0 PULSE(0 10 10n 1n 1n 1 1)
-    rload n2 0 100k
-    """
+Other settings you should specify are the fitness function or a list of them if you have more than one simulation. These are the goals of the evolution, that circuits are scored against.
 
-Other settings you should specify are a list of fitness functions. These are Python
-functions that measure how well the evolved circuits meet the goals of the simulation.
+Definition of the fitness function is:
 
-For example a 1V/1A constant fitness function:
+    def fitness\_function(a,b,**kwargs)
 
-    def goal(v,k):
+First argument is the input value of the measurement(eg. voltage, current,
+decibels, phase...). Second is the name of the SPICE measurement(eg. v(n2),
+vdb(n3), i(vin)). \*\*kwargs has the optional extra\_value of the chromosome and
+the current generation.
+
+For example a constant fitness function:
+
+    def goal(v,k,**kwargs):
         """v is input, either voltage, frequency, time... depends on spice
         simulation. k is the name of node being measured"""
         return 1
 
-Another fitness function: A spice simualtion with more than one measurement. This
+Another fitness function: A spice simulation with more than one measurement and example use of \*\*kwargs. This
 example has a current and voltage measurements:
 
-    def goal(v,k):
+    def goal(v,k,**kwargs):
         if k[0]=='v':   #Voltage
-            return 1    #1V
+            return kwargs['extra_value'][0]    #1V
         elif k[0]=='i': #Current
-            return 1e-3 #1mA
+            return 1e-3 if kwargs['generation]<10 else 0
 
-Discontinous fitness function, that is 0 before time is 100ns and 5 after it:
+Discontinous fitness function that is 0 before time is 100ns and 5 after it:
 
-    def goal(t,k):
+    def goal(t,k,**kwargs):
         #t is now time
         return 0 if t<=100e-9 else 5
 
 Fitness weights are either constants that scores are multiplied with, or
-functions that invidual values of spice simulation are weighted with if you want
+functions that individual values of spice simulation are weighted with, if you want
 to for example weight some part of the results higher than other parts. They
 should be in list of dictionaries where number of elements in list is same as
 number of spice simulations. The nth element is used with nth spice simulation. Keys
@@ -112,25 +137,9 @@ of the dictionaries are names of measurements(eg. 'v(n2)') and values are
 weights.
 
 For example a constants weights with 4 simulations with second one having two
-measurements: 
+measurements:
 
     fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':50},{'v(n2)':1},{'v(n2)':0.05}]
 
 
-Other options that should be specified:
-    
-    pool_size: Number of circuits in one generation
-    nodes: Number of available nodes in one circuit
-    max_parts: Maximum number of parts in one circuit
-    elitism: Number of circuits that are copied to next generation with 100%
-    probability.
-    mutation_rate: Probability of mutations(In range 0.0-1.0)
-    crossover_rate: Probability of crossovers
-    log: Log file
-    plot_titles: Titles of plots, list of dictionaries. Same format as
-    fitness_weight
-    plot_yrange: Range of y-axis in the plots, dictionary with measurements as
-    keys and tuple of (min,max) as values.
-
-
-See the bottom of "inverter.py" for examples.
+See the "inverter.py" for an example.
