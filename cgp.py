@@ -9,6 +9,8 @@ import re
 import pickle
 from os.path import join as path_join
 import os
+import getch
+import sys
 inf = 1e12
 simulation_timeout = 0.5#seconds
 THREADS = 4
@@ -160,28 +162,29 @@ class CGP:
     plot_titles: Titles for the plots of cricuits
     """
     def __init__(self,
-    pool_size,
+    population,
     nodes,
-    parts_list,
+    parts,
     max_parts,
     elitism,
     mutation_rate,
     crossover_rate,
-    fitnessfunction,
+    fitness_function,
     fitness_weight,
     constraints,
-    spice_sim_commands,
+    spice_commands,
     log,
-    directory='',
+    title='',
     common='',
     models='',
     resumed=False,
     extra_value=None,
     plot_titles=None,
-    plot_yrange=None):
+    plot_yrange=None,
+    **kwargs):
 
 
-        self.spice_commands=[i+common+models for i in spice_sim_commands]
+        self.spice_commands=[i+common+models for i in spice_commands]
         sim = map(self.parse_sim_options,self.spice_commands)
 
         print strftime("%Y-%m-%d %H:%M:%S")
@@ -205,7 +208,7 @@ class CGP:
         #Maximum value of frequency or sweep
         self.frange   = [sim[i][2] for i in xrange(len(sim))]
         self.fitness_weight = fitness_weight
-        self.ff=fitnessfunction
+        self.ff=fitness_function
         self.constraints = constraints
         self.constraints_filled = False
         self.nodes = nodes
@@ -229,8 +232,8 @@ class CGP:
         if len(self.spice_commands)>len(self.ff):
             raise Exception('Not enough fitness functions')
 
-        self.pool_size=pool_size-pool_size%THREADS+THREADS
-        self.parts_list = parts_list
+        self.pool_size=population-population%THREADS+THREADS
+        self.parts_list = parts
         self.generation=0
         self.elitism=elitism
         self.alltimebest=(float('inf'),float('inf'))
@@ -244,14 +247,14 @@ class CGP:
         self.plot_yrange = plot_yrange
 
         #Directory to save files in
-        self.directory = directory
+        self.directory = title
 
 
 
     def parse_sim_options(self,option):
         """Parses spice simulation commands for ac,dc,trans and temp words.
         If ac simulation is found plotting scale is made logarithmic"""
-        m = re.search(r'\n(ac|AC) [a-zA-Z1-9]* [0-9\.]* [0-9\.]* [0-9\.]*[a-zA-Z]?',option)
+        m = re.search(r'\n(ac|AC) [a-zA-Z1-9]* [0-9\.]* [0-9\.]* [0-9\.]*[a-zA-Z]?[0-9\.]*',option)
         temp = ('.temp' in option) or ('.dtemp' in option)
         if m!=None:
             m = m.group(0).split()
@@ -366,36 +369,24 @@ class CGP:
 
         con_filled = True
         con_penalty=0
-        if self.log_plot[i]:
-            for p in xrange(1,len(f)):
-                #Divided by frequency for even scores across whole frequency range in log scale.
-                try:
-                    total+=weight( (f[p]-f[p-1]/2) )*(x[0][p]-x[0][p-1])*(( func(f[p],k,extra=extra)+func(f[p-1],k,extra=extra) - x[1][p] - x[1][p-1])**2)/x[0][p]
-                except TypeError:
-                    print 'Fitness function returned invalid value'
-                    raise
-
-                if not self.constraints[i]( f[p],v[p],k ):
+        for p in xrange(1,len(f)):
+            try:
+                total+=weight( f[p] )*(f[p]-f[p-1])*abs( func(f[p],k,extra=extra) - v[p] )
+            except TypeError:
+                print 'Fitness function returned invalid value'
+                raise
+            except OverflowError:
+                total=inf
+                pass
+            if self.constraints[i]!=None:
+                con=self.constraints[i]( f[p],v[p],k,extra=extra,generation=self.generation )
+                if con==None:
+                    print 'Constraint function {} return None, for input: ({},{},{},extra={},generation={})'.format(i,f[p],v[p],k,extra,self.generation)
+                if con==False:
+                    con_penalty+=100
                     con_filled=False
-        else:
-            for p in xrange(1,len(f)):
-                try:
-                    total+=weight( f[p] )*(f[p]-f[p-1])*( func(f[p],k,extra=extra) - v[p] )**2
-                except TypeError:
-                    print 'Fitness function returned invalid value'
-                    raise
-                except OverflowError:
-                    total=inf
-                    pass
-                if self.constraints[i]!=None:
-                    con=self.constraints[i]( f[p],v[p],k,extra=extra,generation=self.generation )
-                    if con==None:
-                        print 'Constraint function {} return None, for input: ({},{},{},extra={},generation={})'.format(i,f[p],v[p],k,extra,self.generation)
-                    if con==False:
-                        con_penalty+=100
-                        con_filled=False
 
-            total/=y
+        total/=y
         if total<0:
             return inf
         if con_penalty>1e5:
@@ -409,7 +400,7 @@ class CGP:
             print f,c
         print
 
-    def save_plot(self,circuit,i,log=True,name='',**kwargs):
+    def save_plot(self,circuit,i,name='',**kwargs):
         v = circuit.evaluate(self.spice_commands[i])[1]
         #For every measurement in results
         for k in v.keys():
@@ -419,22 +410,22 @@ class CGP:
             freq = v[k][0]
             gain = v[k][1]
             goal_val = [self.ff[i](f,k,extra=circuit.extra_value,generation=self.generation) for f in freq]
-            if self.plot_weight:
-                weight_val = [self.fitness_weight[i](c,k) for c in freq]
-            if self.constraints[i]!=None and self.plot_constraints:
-                constraint_val = [not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation) for c in xrange(len(freq))]
-            if log==True:#Logarithmic plot
+            #if self.plot_weight:
+            #    weight_val = [self.fitness_weight[i](c,k) for c in freq]
+            #if self.constraints[i]!=None and self.plot_constraints:
+            #    constraint_val = [not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation) for c in xrange(len(freq))]
+            if self.log_plot[i]==True:#Logarithmic plot
                 plt.semilogx(freq,gain,'g',basex=10)
                 plt.semilogx(freq,goal_val,'b',basex=10)
-                if self.plot_weight:
-                    plt.semilogx(freq,weight_val,'r--',basex=10)
-                if self.plot_constraints:
-                    plt.semilogx(freq,constraint_val,'m',basex=10)
+                #if self.plot_weight:
+                #    plt.semilogx(freq,weight_val,'r--',basex=10)
+                #if self.plot_constraints:
+                #    plt.semilogx(freq,constraint_val,'m',basex=10)
             else:
                 plt.plot(freq,gain,'g')
                 plt.plot(freq,goal_val,'b')
-                if self.plot_weight:
-                    plt.plot(freq,weight_val,'r--')
+                #if self.plot_weight:
+                #    plt.plot(freq,weight_val,'r--')
                 #FIXME: Need a better way to plot constraints
                 #if self.constraints[i]!=None and self.plot_constraints:
                 #    plt.plot(freq,constraint_val,'m')
@@ -466,7 +457,9 @@ class CGP:
             plt.grid(True)
             # turn on the minor gridlines to give that awesome log-scaled look
             plt.grid(True,which='minor')
-            if k[0]=='v':
+            if len(k)>=3 and k[1:3] == 'db':
+                plt.ylabel("Output (dB)")
+            elif k[0]=='v':
                 plt.ylabel("Output (V)")
             elif k[0]=='i':
                 plt.ylabel("Output (A)")
@@ -546,7 +539,7 @@ class CGP:
             for c in xrange(len(self.spice_commands)):
                 self.save_plot(
                         self.pool[0][1],
-                        i=c,log=self.log_plot,name=str(c))
+                        i=c,name=str(c))
         except:
             print 'Plotting failed'
             raise
@@ -575,3 +568,83 @@ class CGP:
         except OSError:
             pass#First time saving and file doesn't exist yet
         os.rename(out_temp,out)
+
+def load_settings(filename):
+    no_defaults= ['title','max_parts','spice_commands','parts','fitness_function']
+    default_settings = {'common':'',
+                        'models':'',
+                        'constraints':None,
+                        'population':1000,
+                        'nodes':None,
+                        'elitism':1,
+                        'mutation_rate':0.7,
+                        'crossover_rate':0.2,
+                        'fitness_weight':None,
+                        'extra_value':None,
+                        'log':None,
+                        'plot_titles':None,
+                        'plot_yrange':None
+                        }
+    settings = default_settings.copy()
+    temp = {}
+    execfile(filename,temp)
+    for key in temp:
+        if key[0]!='_':
+            if key not in default_settings.keys()+no_defaults:
+                print 'Ignoring unknown command:',key
+                continue
+            settings[key] = temp[key]
+    for key in no_defaults:
+        if key not in settings.keys():
+            print '"{}" is required'.format(key)
+            exit()
+    print 'Settings loaded'
+    return settings
+
+def main(filename):
+    settings = load_settings(filename)
+    if not os.path.exists(settings['title']):
+        os.makedirs(settings['title'])
+    resume = False
+    try:
+        r_file = open(path_join(settings['title'],'.dump'),'r')
+        print "Do you want to resume Y/n:"
+        while True:
+            r = getch._Getch()()
+            if r=='':
+                resume = True
+                print "Resumed"
+                break
+            if r in ('y','Y','\n'):
+                resume = True
+                print "Resumed"
+                break
+            if r in ('n','N'):
+                break
+    except IOError:
+        print 'No save file found'
+        pass
+
+    if resume:
+        #Resuming from file
+        resumed = pickle.load(r_file)
+        outfile = open(resumed[2],'a')
+    if settings['log']!=None:
+        settings['log']=outfile
+    else:
+        if resume:
+            settings['log']= open(resumed[2],'a')
+        else:
+            settings['log']= open(path_join(settings['title'],'sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log'),'w')
+
+
+
+    e = CGP(resume=resume,**settings)
+
+    if resume:
+        e.generation = resumed[0]
+        e.pool = resumed[1]
+    e.run()
+
+if __name__ == '__main__':
+    main(sys.argv[1])
