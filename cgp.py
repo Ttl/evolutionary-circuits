@@ -139,7 +139,7 @@ def multipliers(x):
     try:
         a = x[-1]
         y = float(x[:-1])
-        endings = {'u':-6,'n':-9,'p':-12,'s':0}
+        endings = {'G':9,'Meg':6,'k':3,'m':-3,'u':-6,'n':-9,'p':-12,'s':0}
         return y*(10**endings[a])
     except:
         raise ValueError("I don't know what {} means".format(x))
@@ -163,20 +163,20 @@ class CGP:
     """
     def __init__(self,
     population,
-    nodes,
     parts,
     max_parts,
     elitism,
     mutation_rate,
     crossover_rate,
     fitness_function,
-    fitness_weight,
     constraints,
     spice_commands,
     log,
     title='',
     common='',
     models='',
+    fitness_weight=None,
+    nodes=None,
     resumed=False,
     extra_value=None,
     plot_titles=None,
@@ -184,7 +184,27 @@ class CGP:
     **kwargs):
 
 
-        self.spice_commands=[i+common+models for i in spice_commands]
+        #Correct the types
+        if hasattr(fitness_function, '__call__'):
+            self.ff=[fitness_function]
+        else:
+            self.ff=fitness_function
+
+        if hasattr(constraints, '__call__'):
+            self.constraints=[constraints]
+        else:
+            self.constraints = constraints
+
+        if hasattr(spice_commands, '__call__'):
+            self.spice_commands=[spice_commands+common+models]
+        else:
+            self.spice_commands=[i+common+models for i in spice_commands]
+
+        if fitness_weight==None:
+            self.fitness_weight=[{}]
+        else:
+            self.fitness_weight = fitness_weight
+
         sim = map(self.parse_sim_options,self.spice_commands)
 
         print strftime("%Y-%m-%d %H:%M:%S")
@@ -207,11 +227,11 @@ class CGP:
         self.log_plot = [sim[i][1] for i in xrange(len(sim))]
         #Maximum value of frequency or sweep
         self.frange   = [sim[i][2] for i in xrange(len(sim))]
-        self.fitness_weight = fitness_weight
-        self.ff=fitness_function
-        self.constraints = constraints
         self.constraints_filled = False
-        self.nodes = nodes
+        if nodes == None:
+            self.nodes = max_parts
+        else:
+            self.nodes = nodes
         self.max_parts = max_parts
         self.extra_value = extra_value
 
@@ -272,8 +292,7 @@ class CGP:
 
     def rank_pool(self,pool):
         """Multithreaded version of self.rank, computes scores for whole pool"""
-        results = [[None for c in xrange(len(self.spice_commands))] for i in xrange(self.pool_size)]
-        threads = [None for i in xrange(THREADS)]
+        scores  = [0 for i in xrange(self.pool_size)]
 
         lasterror = None
         for i in xrange(len(self.spice_commands)):
@@ -283,16 +302,16 @@ class CGP:
 
                 threads = []
                 for e,a in enumerate(pool[t*THREADS:t*THREADS+THREADS]):
-                    if i==0 or results[THREADS*t+e][i-1]!=None:
+                    if scores[THREADS*t+e]<inf:
                         threads.append(circuits.spice_thread(a.spice_input(self.spice_commands[i])))
                     else:
                         threads.append(None)
 
                 for e,thread in enumerate(threads):
-                    if i==0 or results[THREADS*t+e][i-1]!=None:
+                    if scores[THREADS*t+e]<inf:
                         thread.start()
                 for e,thread in enumerate(threads):
-                    if i==0 or results[THREADS*t+e][i-1]!=None:
+                    if scores[THREADS*t+e]<inf:
                         thread.join(simulation_timeout)
                         if thread.is_alive():
                             try:
@@ -302,18 +321,25 @@ class CGP:
                             thread.join()
 
                 for e,thread in enumerate(threads):
-                    if i>0 and results[THREADS*t+e][i-1]==None:
+                    if thread==None:
                         skipped+=1
-                        results[THREADS*t+e][i] = None
+                        continue
+                    if scores[THREADS*t+e]>=inf:
+                        skipped+=1
+                        scores[THREADS*t+e]=inf
                     else:
                         if thread.result==None:
                             errors+=1
                             lasterror = "Simulation timedout"
+                            scores[THREADS*t+e]=inf
                         elif thread.result[1]=={}:
                             errors+=1
                             lasterror = thread.result[0]
+                            scores[THREADS*t+e]=inf
                         else:
-                            results[THREADS*t+e][i] = thread.result[1]
+                            if scores[THREADS*t+e]<inf:
+                                for k in thread.result[1].keys():
+                                    scores[THREADS*t+e]+=self._rank(thread.result[1],i,k,extra=pool[THREADS*t+e].extra_value)
                             thread.result = None
                 del threads
             #print 'Skipped: {}'.format(skipped)
@@ -321,17 +347,18 @@ class CGP:
                 #All simulations failed
                 raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
 
-        for t in xrange(self.pool_size):
-            pool[t]=[0,pool[t]]
-            for i in xrange(len(self.spice_commands)):
-                if results[t][i]==None or len(results[t][i].keys())==0:
-                    pool[t][0]=inf
-                    continue
-                for k in results[t][i].keys():
-                    pool[t][0]+=self._rank(results[t][i],i,k,extra=pool[t][1].extra_value)
-            pool[t]=tuple(pool[t])#Make immutable for reduction in memory
+        #for t in xrange(self.pool_size):
+        #    pool[t]=[0,pool[t]]
+        #    for i in xrange(len(self.spice_commands)):
+        #        if results[t][i]==None or len(results[t][i].keys())==0:
+        #            pool[t][0]=inf
+        #            continue
+        #        for k in results[t][i].keys():
+        #            pool[t][0]+=self._rank(results[t][i],i,k,extra=pool[t][1].extra_value)
+        #    pool[t]=tuple(pool[t])#Make immutable for reduction in memory
 
-        return sorted(pool)
+        #return sorted(pool)
+        return sorted([(scores[i],pool[i]) for i in xrange(self.pool_size)])
 
     def _rank(self,x,i,k,extra=None,c=None):
         """Score of single circuit against single fitness function
@@ -345,16 +372,12 @@ class CGP:
         func = self.ff[i]
         try:#fitness_weight migh be None, or it might be list of None, or list of dictionary that contains None
             weight = self.fitness_weight[i][k]
-        except IndexError:
-            weight = lambda x:1
-        except KeyError:
-            weight = lambda x:1
-        except TypeError:
-            weight = lambda x:1
+        except (KeyError,TypeError,IndexError):
+            weight = lambda x,**kwargs:1
         #If no weight function create function that returns one for all inputs
         if type(weight) in (int,long,float):
             c = weight
-            weight = lambda x:float(c)#Make a constant anonymous function
+            weight = lambda x,**kwargs:float(c)#Make a constant anonymous function
 
         try:
             f = x[k][0]#Input
@@ -371,7 +394,7 @@ class CGP:
         con_penalty=0
         for p in xrange(1,len(f)):
             try:
-                total+=weight( f[p] )*(f[p]-f[p-1])*abs( func(f[p],k,extra=extra) - v[p] )
+                total+=weight( f[p],extra=extra)*(f[p]-f[p-1])*abs( func(f[p],k,extra=extra) - v[p] )
             except TypeError:
                 print 'Fitness function returned invalid value'
                 raise
