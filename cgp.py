@@ -1,6 +1,12 @@
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+try:
+    PLOTTING='matplotlib'
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+except:
+    import subprocess
+    PLOTTING='external'
+
 import circuits
 import random
 from copy import deepcopy
@@ -17,16 +23,16 @@ THREADS = 4
 
 class Circuit_gene:
     """Represents a single component"""
-    def __init__(self,name,nodes,*args):
+    def __init__(self,name,nodes,cost,*args):
         #Name of the component(eg. "R1")
         self.spice_name = name
         #N-tuple of values
         self.values = args
         self.spice_options = ' '.join(map(str,*args))
         self.nodes = nodes
+        self.cost = cost
     def __repr__(self):
         return self.spice_name+str(id(self))+' '+' '.join(map(str,self.nodes))+' '+self.spice_options
-
 
 def log_dist(a,b):
     #Uniform random number in logarithmic scale
@@ -36,7 +42,7 @@ def same(x):
     #True if all elements are same
     return reduce(lambda x,y:x==y,x)
 
-def random_element(parts,nodes):
+def random_element(parts,nodes,fixed_node=None):
     #Return random circuit element from parts list
     name = random.choice(parts.keys())
     part = parts[name]
@@ -50,18 +56,30 @@ def random_element(parts,nodes):
     nodes = [random.choice(node_list) for i in xrange(part['nodes'])]
     while same(nodes):
         nodes = [random.choice(node_list) for i in xrange(part['nodes'])]
+    if fixed_node!=None:
+        nodes[0]=fixed_node
+        random.shuffle(nodes)
     if 'spice' in part:
         spice_line.append(part['spice'])
-    return Circuit_gene(name,nodes,spice_line)
+    if 'cost' in part:
+        cost = part['cost']
+    else:
+        cost = 0
+    return Circuit_gene(name,nodes,cost,spice_line)
 
 def mutate_value(element,parts):
-    val = element.values[0]
+    i = random.randint(0,len(element.values)-1)
+    val = element.values[i]
     name = element.spice_name
     try:
-        val[0] = log_dist(parts[name]['min'],parts[name]['max'])
+        val[i] = log_dist(parts[name]['min'],parts[name]['max'])
     except:
         return element
-    return Circuit_gene(element.spice_name,element.nodes,val)
+    try:
+        cost = parts[element.spice_name]['cost']
+    except KeyError:
+        cost = 0
+    return Circuit_gene(element.spice_name,element.nodes,cost,val)
 
 class Chromosome:
     """Class that contains one circuit and all of it's parameters"""
@@ -86,8 +104,16 @@ class Chromosome:
         """Pretty print function"""
         return '\n'.join(map(str,self.elements))
 
+    def get_connected_node(self):
+        """Randomly returns one connected node"""
+        if len(self.elements)>0:
+            device = random.choice(self.elements)
+            return random.choice(device.nodes)
+        else:
+            return 'n1'
+
     def mutate(self):
-        m = random.randint(0,5)
+        m = random.randint(0,6)
         i = random.randint(0,len(self.elements)-1)
         if m==0:
             #Change value of one component
@@ -95,14 +121,16 @@ class Chromosome:
         elif m==1:
             #Add one component if not already maximum number of components
             if len(self.elements)<self.max_parts:
-                self.elements.append(random_element(self.parts_list,self.nodes))
+                #self.elements.append(random_element(self.parts_list,self.nodes))
+                self.elements.append(random_element(self.parts_list,self.nodes,fixed_node=self.get_connected_node()))
         elif m==2 and len(self.elements)>1:
             #Delete one component
             del self.elements[i]
         elif m==3:
-            #Delete one and add one component
+            #Replace one component keeping one node connected
+            fixed_node = random.choice(self.elements[i].nodes)
             del self.elements[i]
-            self.elements.append(random_element(self.parts_list,self.nodes))
+            self.elements.append(random_element(self.parts_list,self.nodes,fixed_node=fixed_node))
         elif m==4:
             #Shuffle list of elements(better crossovers)
             random.shuffle(self.elements)
@@ -113,6 +141,17 @@ class Chromosome:
                 self.extra_value[i] = random.uniform(*self.extra_range[i])
             else:
                 self.mutate()
+        elif m==6:
+            #Relabel nodes
+            node_list = ['n'+str(i) for i in xrange(self.nodes)]+['0']
+            n1 = random.choice(('n2','n1'))
+            #n1 = random.choice(node_list)
+            n2 = random.choice(node_list)
+            while n1!=n2:
+                n2 = random.choice(node_list)
+            for element in self.elements:
+                element.nodes = [(n1 if i==n2 else (n2 if i==n1 else i)) for i in element.nodes]
+
 
     def spice_input(self,options):
         """Generate the input to SPICE"""
@@ -171,16 +210,18 @@ class CGP:
     fitness_function,
     constraints,
     spice_commands,
-    log,
+    log_file,
     title='',
     common='',
     models='',
     fitness_weight=None,
+    constraint_weight=None,
     nodes=None,
     resumed=False,
     extra_value=None,
     plot_titles=None,
     plot_yrange=None,
+    selection_weight=1,
     **kwargs):
 
 
@@ -204,6 +245,11 @@ class CGP:
             self.fitness_weight=[{}]
         else:
             self.fitness_weight = fitness_weight
+
+        if constraint_weight==None:
+            self.constraint_weight=[100 for i in xrange(len(spice_commands))]
+        else:
+            self.constraint_weight = constraint_weight
 
         sim = map(self.parse_sim_options,self.spice_commands)
 
@@ -234,6 +280,7 @@ class CGP:
             self.nodes = nodes
         self.max_parts = max_parts
         self.extra_value = extra_value
+        self.selection_weight = selection_weight
 
         #FIXME weight function plotting is currently disabled
         self.plot_weight=False
@@ -259,9 +306,9 @@ class CGP:
         self.alltimebest=(float('inf'),float('inf'))
         self.mrate = mutation_rate
         self.crate = crossover_rate
-        self.logfile = log
+        self.logfile = log_file
         if not resumed:
-            log.write("Spice simulation commands:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
+            log_file.write("Spice simulation commands:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
 
         self.plot_titles = plot_titles
         self.plot_yrange = plot_yrange
@@ -339,9 +386,8 @@ class CGP:
                         else:
                             if scores[THREADS*t+e]<inf:
                                 for k in thread.result[1].keys():
-                                    scores[THREADS*t+e]+=self._rank(thread.result[1],i,k,extra=pool[THREADS*t+e].extra_value)
+                                    scores[THREADS*t+e]+=self._rank(thread.result[1],i,k,extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
                             thread.result = None
-                del threads
             #print 'Skipped: {}'.format(skipped)
             if errors + skipped == self.pool_size:
                 #All simulations failed
@@ -360,14 +406,9 @@ class CGP:
         #return sorted(pool)
         return sorted([(scores[i],pool[i]) for i in xrange(self.pool_size)])
 
-    def _rank(self,x,i,k,extra=None,c=None):
+    def _rank(self,x,i,k,extra=None,circuit=None):
         """Score of single circuit against single fitness function
         x is a dictionary of measurements, i is number of simulation, k is the measurement to score"""
-        if c!=None:
-            #Circuit in input and x needs to be calculated.
-            x = c.evaluate(self.spice_commands[i])
-            if x==None or len(x.keys())==0:
-                return inf
         total=0.0
         func = self.ff[i]
         try:#fitness_weight migh be None, or it might be list of None, or list of dictionary that contains None
@@ -406,7 +447,7 @@ class CGP:
                 if con==None:
                     print 'Constraint function {} return None, for input: ({},{},{},extra={},generation={})'.format(i,f[p],v[p],k,extra,self.generation)
                 if con==False:
-                    con_penalty+=100
+                    con_penalty+=self.constraint_weight[i]
                     con_filled=False
 
         total/=y
@@ -415,7 +456,10 @@ class CGP:
         if con_penalty>1e5:
             con_penalty=1e5
         total+=con_penalty
-        return total*1000+10000*(not con_filled)
+        if self.generation%20>11:
+            if circuit!=None and con_filled:
+                total+=sum([i.cost if hasattr(i,'cost') else 0.1 for i in circuit.elements])
+        return total*1000+20000*(not con_filled)
 
     def printpool(self):
         """Prints all circuits and their scores in the pool"""
@@ -435,23 +479,23 @@ class CGP:
             goal_val = [self.ff[i](f,k,extra=circuit.extra_value,generation=self.generation) for f in freq]
             #if self.plot_weight:
             #    weight_val = [self.fitness_weight[i](c,k) for c in freq]
-            #if self.constraints[i]!=None and self.plot_constraints:
-            #    constraint_val = [not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation) for c in xrange(len(freq))]
+            if self.constraints[i]!=None and self.plot_constraints:
+                constraint_val = [(freq[c],gain[c])  for c in xrange(len(freq)) if not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation)]
+
             if self.log_plot[i]==True:#Logarithmic plot
                 plt.semilogx(freq,gain,'g',basex=10)
                 plt.semilogx(freq,goal_val,'b',basex=10)
                 #if self.plot_weight:
                 #    plt.semilogx(freq,weight_val,'r--',basex=10)
-                #if self.plot_constraints:
-                #    plt.semilogx(freq,constraint_val,'m',basex=10)
+                if self.plot_constraints:
+                    plt.plot(*zip(*constraint_val), marker='.', color='r', ls='')
             else:
                 plt.plot(freq,gain,'g')
                 plt.plot(freq,goal_val,'b')
                 #if self.plot_weight:
                 #    plt.plot(freq,weight_val,'r--')
-                #FIXME: Need a better way to plot constraints
-                #if self.constraints[i]!=None and self.plot_constraints:
-                #    plt.plot(freq,constraint_val,'m')
+                if self.plot_constraints:
+                    plt.plot(*zip(*constraint_val), marker='.', color='r', ls='')
 
             # update axis ranges
             ax = []
@@ -492,9 +536,9 @@ class CGP:
     def step(self):
         self.generation+=1
 
-        def sf(pool):
+        def sf(pool,weight=1):
             #Select chromosomes from pool using weighted probablities
-            r=random.random()
+            r=random.random()**weight
             return random.choice(pool[:1+int(len(pool)*r)])[1]
 
         #Update best
@@ -519,9 +563,9 @@ class CGP:
             newsize=self.elitism
             while newsize<self.pool_size:
                 newsize+=1
-                c=deepcopy(sf(self.pool))   #selected chromosome
+                c=deepcopy(sf(self.pool,weight=self.selection_weight))   #selected chromosome
                 if random.random()<=self.crate:#crossover
-                    d=sf(self.pool)
+                    d=sf(self.pool,weight=self.selection_weight)
                     l = max(len(c.elements),len(d.elements))
                     r1 = random.randint(0,l)
                     r2 = random.randint(0,l)
@@ -558,14 +602,43 @@ class CGP:
         return sum(i[0] for i in self.pool)/float(self.pool_size)
 
     def plotbest(self):
-        try:
-            for c in xrange(len(self.spice_commands)):
-                self.save_plot(
-                        self.pool[0][1],
-                        i=c,name=str(c))
-        except:
-            print 'Plotting failed'
-            raise
+        if PLOTTING=='matplotlib':
+            try:
+                for c in xrange(len(self.spice_commands)):
+                    self.save_plot(
+                            self.pool[0][1],
+                            i=c,name=str(c))
+            except:
+                print 'Plotting failed'
+                raise
+        elif PLOTTING=='external':
+            circuit = self.pool[0][1]
+            for i in xrange(len(self.spice_commands)):
+                v = circuit.evaluate(self.spice_commands[i])[1]
+                for k in v.keys():
+                    freq = v[k][0]
+                    gain = v[k][1]
+                    score = self._rank(v,i,k,extra=circuit.extra_value)
+                    goal_val = [self.ff[i](f,k,extra=circuit.extra_value,generation=self.generation) for f in freq]
+                    if self.constraints[i]!=None and self.plot_constraints:
+                        constraint_val = [(freq[c],gain[c])  for c in xrange(len(freq)) if not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation)]
+                    else:
+                        constraint_val = None
+
+
+                    plt = subprocess.Popen(['python','plotting.py'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                    try:
+                        title = self.plot_titles[i]
+                    except (KeyError,TypeError):
+                        title = None
+
+                    if k in self.plot_yrange.keys():
+                        yrange = self.plot_yrange[k]
+                    else:
+                        yrange = None
+                    data = ((freq,gain),k,goal_val,self.sim_type[i],self.generation,score,self.directory,title,yrange,self.log_plot[i],constraint_val,i)
+                    plt.communicate(str(data))
+
 
     def run(self):
         try:
@@ -604,9 +677,11 @@ def load_settings(filename):
                         'crossover_rate':0.2,
                         'fitness_weight':None,
                         'extra_value':None,
-                        'log':None,
+                        'log_file':None,
                         'plot_titles':None,
-                        'plot_yrange':None
+                        'plot_yrange':None,
+                        'selection_weight':1,
+                        'constraint_weight':None
                         }
     settings = default_settings.copy()
     temp = {}
@@ -652,13 +727,13 @@ def main(filename):
         #Resuming from file
         resumed = pickle.load(r_file)
         outfile = open(resumed[2],'a')
-    if settings['log']!=None:
-        settings['log']=outfile
+    if settings['log_file']!=None:
+        settings['log_file']=outfile
     else:
         if resume:
-            settings['log']= open(resumed[2],'a')
+            settings['log_file']= open(resumed[2],'a')
         else:
-            settings['log']= open(path_join(settings['title'],'sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log'),'w')
+            settings['log_file']= open(path_join(settings['title'],'sim'+strftime("%Y-%m-%d %H:%M:%S")+'.log'),'w')
 
 
 
