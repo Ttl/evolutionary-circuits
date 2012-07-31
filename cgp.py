@@ -628,7 +628,7 @@ class CGP:
 
                     plt = subprocess.Popen(['python','plotting.py'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                     try:
-                        title = self.plot_titles[i]
+                        title = self.plot_titles[i][k]
                     except (KeyError,TypeError):
                         title = None
 
