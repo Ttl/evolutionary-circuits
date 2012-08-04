@@ -113,7 +113,7 @@ class Chromosome:
             return 'n1'
 
     def mutate(self):
-        m = random.randint(0,6)
+        m = random.randint(0,7)
         i = random.randint(0,len(self.elements)-1)
         if m==0:
             #Change value of one component
@@ -124,31 +124,44 @@ class Chromosome:
                 #self.elements.append(random_element(self.parts_list,self.nodes))
                 self.elements.append(random_element(self.parts_list,self.nodes,fixed_node=self.get_connected_node()))
         elif m==2 and len(self.elements)>1:
-            #Delete one component
+            #Replace one component with open circuit
             del self.elements[i]
-        elif m==3:
+        elif m==3 and len(self.elements)>1:
+            #Replace one component with open circuit
+            nodes = self.elements[i].nodes
+            random.shuffle(nodes)
+            try:
+                n1 = nodes[0]
+                n2 = nodes[1]
+            except IndexError:
+                return None#Device doesn't have two nodes
+            del self.elements[i]
+            for element in self.elements:
+                element.nodes = [(n1 if i==n2 else i) for i in element.nodes]
+        elif m==4:
             #Replace one component keeping one node connected
             fixed_node = random.choice(self.elements[i].nodes)
             del self.elements[i]
             self.elements.append(random_element(self.parts_list,self.nodes,fixed_node=fixed_node))
-        elif m==4:
+        elif m==5:
             #Shuffle list of elements(better crossovers)
             random.shuffle(self.elements)
-        elif m==5:
+        elif m==6:
             #Change the extra_value
             if self.extra_range!=None:
                 i = random.randint(0,len(self.extra_value)-1)
                 self.extra_value[i] = random.uniform(*self.extra_range[i])
             else:
                 self.mutate()
-        elif m==6:
+        elif m==7:
             #Relabel nodes
-            node_list = ['n'+str(i) for i in xrange(self.nodes)]+['0']
-            n1 = random.choice(('n2','n1'))
-            #n1 = random.choice(node_list)
-            n2 = random.choice(node_list)
-            while n1!=n2:
-                n2 = random.choice(node_list)
+            l = len(self.elements)-1
+            n1 = random.choice(self.elements[random.randint(0,l)].nodes)
+            n2 = random.choice(self.elements[random.randint(0,l)].nodes)
+            tries = 0
+            while tries<10 or n1!=n2:
+                n2 = random.choice(self.elements[random.randint(0,l)].nodes)
+                tries+=1
             for element in self.elements:
                 element.nodes = [(n1 if i==n2 else (n2 if i==n1 else i)) for i in element.nodes]
 
@@ -222,6 +235,7 @@ class CGP:
     plot_titles=None,
     plot_yrange=None,
     selection_weight=1,
+    max_mutations=3,
     **kwargs):
 
 
@@ -306,6 +320,7 @@ class CGP:
         self.alltimebest=(float('inf'),float('inf'))
         self.mrate = mutation_rate
         self.crate = crossover_rate
+        self.max_mutations = max_mutations
         self.logfile = log_file
         if not resumed:
             log_file.write("Spice simulation commands:\n"+'\n'.join(self.spice_commands)+'\n\n\n')
@@ -411,7 +426,7 @@ class CGP:
         x is a dictionary of measurements, i is number of simulation, k is the measurement to score"""
         total=0.0
         func = self.ff[i]
-        try:#fitness_weight migh be None, or it might be list of None, or list of dictionary that contains None
+        try:#fitness_weight might be None, or it might be list of None, or list of dictionary that contains None
             weight = self.fitness_weight[i][k]
         except (KeyError,TypeError,IndexError):
             weight = lambda x,**kwargs:1
@@ -456,7 +471,7 @@ class CGP:
         if con_penalty>1e5:
             con_penalty=1e5
         total+=con_penalty
-        if self.generation%20>11:
+        if self.generation%20>17:
             if circuit!=None and con_filled:
                 total+=sum([i.cost if hasattr(i,'cost') else 0.1 for i in circuit.elements])
         return total*1000+20000*(not con_filled)
@@ -576,7 +591,7 @@ class CGP:
                 if random.random()<=self.mrate:#mutation
                     c.mutate()
                     tries=0
-                    while random.random()<=self.mrate and tries<10:
+                    while random.random()<=self.mrate and tries<self.max_mutations:
                         tries+=1
                         c.mutate()
                 newpool.append(c)
@@ -602,42 +617,41 @@ class CGP:
         return sum(i[0] for i in self.pool)/float(self.pool_size)
 
     def plotbest(self):
-        if PLOTTING=='matplotlib':
-            try:
-                for c in xrange(len(self.spice_commands)):
-                    self.save_plot(
-                            self.pool[0][1],
-                            i=c,name=str(c))
-            except:
-                print 'Plotting failed'
-                raise
-        elif PLOTTING=='external':
-            circuit = self.pool[0][1]
-            for i in xrange(len(self.spice_commands)):
-                v = circuit.evaluate(self.spice_commands[i])[1]
-                for k in v.keys():
-                    freq = v[k][0]
-                    gain = v[k][1]
-                    score = self._rank(v,i,k,extra=circuit.extra_value)
-                    goal_val = [self.ff[i](f,k,extra=circuit.extra_value,generation=self.generation) for f in freq]
-                    if self.constraints[i]!=None and self.plot_constraints:
-                        constraint_val = [(freq[c],gain[c])  for c in xrange(len(freq)) if not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation)]
-                    else:
-                        constraint_val = None
+        try:
+            if PLOTTING=='matplotlib':
+                    for c in xrange(len(self.spice_commands)):
+                        self.save_plot(
+                                self.pool[0][1],
+                                i=c,name=str(c))
+            elif PLOTTING=='external':
+                circuit = self.pool[0][1]
+                for i in xrange(len(self.spice_commands)):
+                    v = circuit.evaluate(self.spice_commands[i])[1]
+                    for k in v.keys():
+                        freq = v[k][0]
+                        gain = v[k][1]
+                        score = self._rank(v,i,k,extra=circuit.extra_value)
+                        goal_val = [self.ff[i](f,k,extra=circuit.extra_value,generation=self.generation) for f in freq]
+                        if self.constraints[i]!=None and self.plot_constraints:
+                            constraint_val = [(freq[c],gain[c])  for c in xrange(len(freq)) if not self.constraints[i](freq[c],gain[c],k,extra=circuit.extra_value,generation=self.generation)]
+                        else:
+                            constraint_val = None
 
 
-                    plt = subprocess.Popen(['python','plotting.py'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-                    try:
-                        title = self.plot_titles[i][k]
-                    except (KeyError,TypeError):
-                        title = None
+                        plt = subprocess.Popen(['python','plotting.py'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                        try:
+                            title = self.plot_titles[i][k]
+                        except (KeyError,TypeError):
+                            title = None
 
-                    if k in self.plot_yrange.keys():
-                        yrange = self.plot_yrange[k]
-                    else:
-                        yrange = None
-                    data = ((freq,gain),k,goal_val,self.sim_type[i],self.generation,score,self.directory,title,yrange,self.log_plot[i],constraint_val,i)
-                    plt.communicate(str(data))
+                        if k in self.plot_yrange.keys():
+                            yrange = self.plot_yrange[k]
+                        else:
+                            yrange = None
+                        data = ((freq,gain),k,goal_val,self.sim_type[i],self.generation,score,self.directory,title,yrange,self.log_plot[i],constraint_val,i)
+                        plt.communicate(str(data))
+        except:
+            print "Plotting failed"
 
 
     def run(self):
@@ -673,15 +687,16 @@ def load_settings(filename):
                         'population':1000,
                         'nodes':None,
                         'elitism':1,
-                        'mutation_rate':0.7,
-                        'crossover_rate':0.2,
+                        'mutation_rate':0.75,
+                        'crossover_rate':0.1,
                         'fitness_weight':None,
                         'extra_value':None,
                         'log_file':None,
                         'plot_titles':None,
                         'plot_yrange':None,
                         'selection_weight':1,
-                        'constraint_weight':None
+                        'constraint_weight':None,
+                        'max_mutations':3
                         }
     settings = default_settings.copy()
     temp = {}
