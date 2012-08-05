@@ -67,14 +67,22 @@ def random_element(parts,nodes,fixed_node=None):
         cost = 0
     return Circuit_gene(name,nodes,cost,spice_line)
 
-def mutate_value(element,parts):
+def mutate_value(element,parts,rel_amount=None):
     i = random.randint(0,len(element.values)-1)
     val = element.values[i]
     name = element.spice_name
-    try:
-        val[i] = log_dist(parts[name]['min'],parts[name]['max'])
-    except:
-        return element
+    if rel_amount==None:
+        try:
+            val[i] = log_dist(parts[name]['min'],parts[name]['max'])
+        except:
+            return element
+    else:
+        try:
+            temp = val[i]*(2*random.random-1)*rel_amount
+            if 10**parts[name]['min']<=temp<=10**parts[name]['max']*10.0:
+                val[i] = temp
+        except:
+            return element
     try:
         cost = parts[element.spice_name]['cost']
     except KeyError:
@@ -117,7 +125,13 @@ class Chromosome:
         i = random.randint(0,len(self.elements)-1)
         if m==0:
             #Change value of one component
-            self.elements[i] = mutate_value(self.elements[i],self.parts_list)
+            m = random.randint(0,1)
+            if m==0:
+                #New value
+                self.elements[i] = mutate_value(self.elements[i],self.parts_list)
+            else:
+                #Slight change
+                self.elements[i] = mutate_value(self.elements[i],self.parts_list,rel_amount=0.1)
         elif m==1:
             #Add one component if not already maximum number of components
             if len(self.elements)<self.max_parts:
@@ -265,11 +279,19 @@ class CGP:
         else:
             self.constraint_weight = constraint_weight
 
+        if len(self.spice_commands)>len(self.fitness_weight):
+            raise Exception('Fitness function weight list length is incorrect')
+        if len(self.spice_commands)>len(self.ff):
+            raise Exception('Not enough fitness functions')
+        if len(self.spice_commands)>len(self.constraints):
+            raise Exception('Not enough constraints. Use None for no constraint')
+        if len(self.spice_commands)>len(self.constraint_weight):
+            raise Exception('Not enough constraint weights.')
         sim = map(self.parse_sim_options,self.spice_commands)
 
         print strftime("%Y-%m-%d %H:%M:%S")
         for e,i in enumerate(sim,1):
-            print 'Simulation {0} - Type: {1}, Logarithmic plot: {2}'.format(e,i[0],i[1])
+            print 'Simulation {0} - Type: {1}, Logarithmic plot: {2}'.format(e,i[0],str(i[1]))
             if i[3]:
                 print 'Temperature specified in simulation'
                 self.temperatures = True
@@ -308,10 +330,7 @@ class CGP:
         else:
             self.plot_constraints=True
 
-        if len(self.spice_commands)>len(self.fitness_weight):
-            raise Exception('Fitness function weight list length is incorrect')
-        if len(self.spice_commands)>len(self.ff):
-            raise Exception('Not enough fitness functions')
+
 
         self.pool_size=population-population%THREADS+THREADS
         self.parts_list = parts
@@ -462,12 +481,13 @@ class CGP:
                 if con==None:
                     print 'Constraint function {} return None, for input: ({},{},{},extra={},generation={})'.format(i,f[p],v[p],k,extra,self.generation)
                 if con==False:
-                    con_penalty+=self.constraint_weight[i]
+                    con_penalty+=1
                     con_filled=False
 
         total/=y
         if total<0:
             return inf
+        con_penalty=self.constraint_weight[i]*con_penalty/len(f)
         if con_penalty>1e5:
             con_penalty=1e5
         total+=con_penalty
