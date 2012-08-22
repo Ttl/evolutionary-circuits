@@ -487,10 +487,9 @@ class CGP:
         total/=y
         if total<0:
             return inf
-        con_penalty=self.constraint_weight[i]*con_penalty/len(f)
         if con_penalty>1e5:
             con_penalty=1e5
-        total+=con_penalty
+        total+=con_penalty*self.constraint_weight[i]/float(len(f))
         if self.generation%20>17:
             if circuit!=None and con_filled:
                 total+=sum([i.cost if hasattr(i,'cost') else 0.1 for i in circuit.elements])
@@ -681,8 +680,7 @@ class CGP:
                 print "Saving progress"
                 self.save_progress(path_join(self.directory,'.dump'))
         except KeyboardInterrupt:
-            print "Saving state..."
-            self.save_progress(path_join(self.directory,'.dump'))
+            pass
 
     def save_progress(self,out):
         """Saves CGP pool,generation and log filename to file"""
