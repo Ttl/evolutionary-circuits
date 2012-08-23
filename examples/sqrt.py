@@ -20,11 +20,11 @@ D1 5 3 N3306D
 Cgs  2 3 20.1E-12
 Cgd1 2 4 57.1E-12
 Cgd2 1 4 5E-12
-M1 1 2 3 3 MOST1
-M2 4 2 1 3 MOST2
+M1 1 2 3 3 MOST1 w=7.6m l=2u
+M2 4 2 1 3 MOST2w=7.6m l=2u
 D1 1 3 Dbody
-.MODEL MOST1 PMOS(LEVEL=3 VTO=-2.3 W=7.6m L=2u KP=10.33u RD=4.014 RS=20m)
-.MODEL MOST2 PMOS(VTO=2.43 W=7.6m L=2u KP=10.33u RS=20m)
+.MODEL MOST1 PMOS(LEVEL=3 VTO=-2.3 KP=10.33u RD=4.014 RS=20m)
+.MODEL MOST2 PMOS(VTO=2.43 KP=10.33u RS=20m)
 .MODEL Dbody D(CJO=53.22E-12 VJ=0.5392 M=0.3583 IS=75.32E-15 N=1.016 RS=1.245
 +              TT=86.56n BV=45 IBV=10u)
 .ENDS BS250
@@ -120,7 +120,7 @@ def _constraint1(f,x,k,**kwargs):
             return abs(x-sqrt(f)*kwargs['extra'][0])<0.1
     return True
 
-population=1000
+population=5000
 max_parts=28#Maximum number of parts
 nodes=22
 elitism=1#Best circuit is copied straight to next generation
@@ -128,7 +128,7 @@ mutation_rate=0.7
 crossover_rate=0.02
 fitness_function=[_goalinv,_transient_goal_inv,_transient_goal_inv2]
 fitness_weight=[{'v(n2)':lambda x,**kwargs:1000/kwargs['extra'][0]+10*abs(kwargs['extra'][0]-1),'i(vc)':100,'i(ve)':100,'i(vin)':100},{'v(n2)':2,'i(vc)':30,'i(ve)':30,'i(vin)':30},{'v(n2)':2,'i(vc)':30,'i(ve)':30,'i(vin)':30}]#Current use is weighted very heavily
-extra_value=[(0.5,2.0)]
+extra_value=[(0.8,2.0)]
 constraints=[_constraint1,None,None]
 constraint_weight=[10000,0,0]
 plot_titles=[{'v(n2)':"DC sweep",'i(vc)':"Current from power supply",'i(vin)':'Current from logic input'},{'v(n2)':'Step response'},{'v(n2)':'Step response'}]
