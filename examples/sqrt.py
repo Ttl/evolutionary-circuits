@@ -1,5 +1,10 @@
+"""This file tries to evolve an analog square root function. Allowed components 
+are resistors and NMOS and PMOS transistors. Result doesn't need to 
+be exactly the square root of the input, it can be from 0.8 to 2.0 times the
+square root.
+"""
 from math import sqrt
-title = 'MOSFET-Sqrt2012-08-22'
+title = 'MOSFET-Sqrt'
 
 models="""
 .SUBCKT BS170 3 4 5
@@ -86,7 +91,6 @@ def _goalinv(f,k,**kwargs):
     """k is the name of measurement. eq. v(n2)"""
     #This is the DC transfer curve goal function
     if k=='v(n2)':
-        #kwargs['extra'][0] is the transition voltage
         return sqrt(f)*kwargs['extra'][0]
     elif k[0]=='i':
         #Goal for current use is 0
@@ -120,14 +124,14 @@ def _constraint1(f,x,k,**kwargs):
             return abs(x-sqrt(f)*kwargs['extra'][0])<0.1
     return True
 
-population=5000
-max_parts=28#Maximum number of parts
-nodes=22
+population=1000
+max_parts=22#Maximum number of parts
+nodes=18
 elitism=1#Best circuit is copied straight to next generation
 mutation_rate=0.7
 crossover_rate=0.02
 fitness_function=[_goalinv,_transient_goal_inv,_transient_goal_inv2]
-fitness_weight=[{'v(n2)':lambda x,**kwargs:1000/kwargs['extra'][0]+10*abs(kwargs['extra'][0]-1),'i(vc)':100,'i(ve)':100,'i(vin)':100},{'v(n2)':2,'i(vc)':30,'i(ve)':30,'i(vin)':30},{'v(n2)':2,'i(vc)':30,'i(ve)':30,'i(vin)':30}]#Current use is weighted very heavily
+fitness_weight=[{'v(n2)':lambda x,**kwargs:(1000 if x>1 else 5000)/kwargs['extra'][0]+10*abs(kwargs['extra'][0]-1),'i(vc)':100,'i(ve)':100,'i(vin)':100},{'v(n2)':2,'i(vc)':30,'i(ve)':30,'i(vin)':30},{'v(n2)':2,'i(vc)':30,'i(ve)':30,'i(vin)':30}]#Current use is weighted very heavily
 extra_value=[(0.8,2.0)]
 constraints=[_constraint1,None,None]
 constraint_weight=[10000,0,0]
