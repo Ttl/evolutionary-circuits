@@ -17,7 +17,7 @@ from os.path import join as path_join
 import os
 import getch
 import sys
-inf = 1e12
+inf = 1e30
 simulation_timeout = 0.5#seconds
 THREADS = 4
 
@@ -182,7 +182,6 @@ class Chromosome:
 
     def spice_input(self,options):
         """Generate the input to SPICE"""
-        global simulatiion_timeout
         program = options+'\n'
         for i in self.elements:
             program+=str(i)+'\n'
@@ -298,6 +297,22 @@ class CGP:
                 #TODO write the current temperature in the plot
         print
 
+        self.c_free_gens = kwargs['constraint_free_generations']
+        self.rnd_circuits = kwargs['random_circuits']
+        self.gradual_constraints = kwargs['gradual_constraints']
+        self.constraint_ramp = kwargs['constraint_ramp']
+        self.plot_all_gens = kwargs['plot_every_generation']
+
+        if type(self.c_free_gens) not in (int,long,float):
+            raise Exception('constraint_free_generations must be a number')
+        if type(self.gradual_constraints) != bool:
+            raise Exception('gradual_constraints must be of type "bool"')
+        if type(self.constraint_ramp) not in (int,long,float):
+            raise Exception('constraint_ramp must be a number')
+        if type(self.plot_all_gens)!=bool:
+            raise Exception('plot_every_generation must be of type "bool"')
+        self.overflowed = 0
+
         self.cache_hits = 0
         self.cache = {}
         self.cache_size = 0
@@ -349,8 +364,6 @@ class CGP:
 
         #Directory to save files in
         self.directory = title
-
-
 
     def parse_sim_options(self,option):
         """Parses spice simulation commands for ac,dc,trans and temp words.
@@ -407,7 +420,6 @@ class CGP:
                         continue
                     if scores[THREADS*t+e]>=inf:
                         skipped+=1
-                        scores[THREADS*t+e]=inf
                     else:
                         if thread.result==None:
                             errors+=1
@@ -427,17 +439,6 @@ class CGP:
                 #All simulations failed
                 raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
 
-        #for t in xrange(self.pool_size):
-        #    pool[t]=[0,pool[t]]
-        #    for i in xrange(len(self.spice_commands)):
-        #        if results[t][i]==None or len(results[t][i].keys())==0:
-        #            pool[t][0]=inf
-        #            continue
-        #        for k in results[t][i].keys():
-        #            pool[t][0]+=self._rank(results[t][i],i,k,extra=pool[t][1].extra_value)
-        #    pool[t]=tuple(pool[t])#Make immutable for reduction in memory
-
-        #return sorted(pool)
         return sorted([(scores[i],pool[i]) for i in xrange(self.pool_size)])
 
     def _rank(self,x,i,k,extra=None,circuit=None):
@@ -463,20 +464,25 @@ class CGP:
         #Sometimes spice doesn't simulate whole frequency range
         #I don't know why, so I just check if spice returned the whole range
         if y<0.99*self.frange[i]:
+            b = open('bad','a')
+            b.write(circuit.spice_input(self.spice_commands[i]))
+            b.close()
             return inf
+
 
         con_filled = True
         con_penalty=0
         for p in xrange(1,len(f)):
             try:
-                total+=weight( f[p],extra=extra)*(f[p]-f[p-1])*abs( func(f[p],k,extra=extra) - v[p] )
+                total+=weight( f[p],extra=extra, generation=self.generation)*(f[p]-f[p-1])*abs( func(f[p],k,extra=extra, generation=self.generation) - v[p] )
             except TypeError:
                 print 'Fitness function returned invalid value'
                 raise
             except OverflowError:
+                self.overflowed += 1
                 total=inf
                 pass
-            if self.constraints[i]!=None:
+            if self.constraints[i]!=None and self.c_free_gens<=self.generation :
                 con=self.constraints[i]( f[p],v[p],k,extra=extra,generation=self.generation )
                 if con==None:
                     print 'Constraint function {} return None, for input: ({},{},{},extra={},generation={})'.format(i,f[p],v[p],k,extra,self.generation)
@@ -487,12 +493,21 @@ class CGP:
         total/=y
         if total<0:
             return inf
-        if con_penalty>1e5:
-            con_penalty=1e5
-        total+=con_penalty*self.constraint_weight[i]/float(len(f))
         if self.generation%20>17:
             if circuit!=None and con_filled:
-                total+=sum([i.cost if hasattr(i,'cost') else 0.1 for i in circuit.elements])
+                total+=sum([element.cost if hasattr(element,'cost') else 0.1 for element in circuit.elements])
+        if con_penalty>1e5:
+            con_penalty=1e5
+        if self.c_free_gens>self.generation:
+            return 1000*total+self.constraint_weight[i]*10
+        if self.gradual_constraints:
+            if self.generation>=self.constraint_ramp-self.c_free_gens:
+                m = 1.0
+            else:
+                m = (self.generation-self.c_free_gens)/float(self.constraint_ramp)
+            total+=m*con_penalty*self.constraint_weight[i]/float(len(f))
+        else:
+            total+=con_penalty*self.constraint_weight[i]/float(len(f))
         return total*1000+20000*(not con_filled)
 
     def printpool(self):
@@ -595,7 +610,7 @@ class CGP:
 
             #We have already chosen "self.elitism" of circuits in the new pool
             newsize=self.elitism
-            while newsize<self.pool_size:
+            while newsize<(1.0-self.rnd_circuits)*self.pool_size:
                 newsize+=1
                 c=deepcopy(sf(self.pool,weight=self.selection_weight))   #selected chromosome
                 if random.random()<=self.crate:#crossover
@@ -614,13 +629,32 @@ class CGP:
                         tries+=1
                         c.mutate()
                 newpool.append(c)
+            while newsize<self.pool_size:
+                #Generate new circuits randomly
+                newpool.append(Chromosome(self.max_parts,self.parts_list,self.nodes,extra_value=self.extra_value))
+                newsize+=1
         start = time()
         self.pool = self.rank_pool(newpool)
 
+        if (self.overflowed > self.pool_size/10):
+            print "{0}\% of the circuits score overflowed, can't continue reliably. Try to decrease scoring weights.".format(100*float(self.overlflowed)/self.pool_size)
+            exit()
+
+        self.overflowed = 0
 
         print "Simulations per second: {}".format(round((len(self.spice_commands)*self.pool_size)/(time()-start),1))
         print "Time per generation: {} seconds".format(round(time()-start,1))
-        if self.pool[0][0]<self.alltimebest[0]:
+        if self.c_free_gens== self.generation:
+            if self.constraints != None:
+                print "Constraints enabled"
+            self.alltimebest = (inf,None)
+
+        if self.gradual_constraints and self.generation>self.c_free_gens:
+            if self.generation-self.c_free_gens>self.constraint_ramp:
+                self.gradual_constraints = False
+
+
+        if self.plot_all_gens or self.pool[0][0]<self.alltimebest[0]:
                 print strftime("%Y-%m-%d %H:%M:%S")
                 print 'Extra values: '+str(self.pool[0][1].extra_value)
                 print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
@@ -630,6 +664,11 @@ class CGP:
                 self.logfile.write(strftime("%Y-%m-%d %H:%M:%S")+' - Generation - '+str(self.generation) +' - '+str(self.alltimebest[0])+':\n'+self.alltimebest[1].pprint()+'\n\n')
                 self.logfile.flush()#Flush changes to the logfile
 
+        #Scale score for gradual constraint ramping
+        if self.gradual_constraints and self.generation>self.c_free_gens:
+            if self.generation-self.c_free_gens<self.constraint_ramp:
+                self.alltimebest = (self.alltimebest[0]*(1-self.c_free_gens+self.generation)/float(self.generation-self.c_free_gens),
+                        self.alltimebest[1])
 
     def averagefit(self):
         """Returns average score of the whole pool."""
@@ -714,7 +753,12 @@ def load_settings(filename):
                         'plot_yrange':None,
                         'selection_weight':1,
                         'constraint_weight':None,
-                        'max_mutations':3
+                        'max_mutations':5,
+                        'constraint_free_generations':1,
+                        'gradual_constraints':True,
+                        'constraint_ramp':20,
+                        'random_circuits':0.01,
+                        'plot_every_generation':False
                         }
     settings = default_settings.copy()
     temp = {}
