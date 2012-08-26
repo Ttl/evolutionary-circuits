@@ -464,9 +464,6 @@ class CGP:
         #Sometimes spice doesn't simulate whole frequency range
         #I don't know why, so I just check if spice returned the whole range
         if y<0.99*self.frange[i]:
-            b = open('bad','a')
-            b.write(circuit.spice_input(self.spice_commands[i]))
-            b.close()
             return inf
 
 
