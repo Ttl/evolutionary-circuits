@@ -36,7 +36,6 @@ class spice_thread(threading.Thread):
                 except:
                     continue
                 index+=1
-                for i in xrange(2):
-                    value[current][0].append(float(temp[1]))
-                    value[current][1].append(float(temp[2]))
+                value[current][0].append(float(temp[1]))
+                value[current][1].append(float(temp[2]))
         return value
