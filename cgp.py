@@ -273,6 +273,9 @@ class CGP:
         else:
             self.fitness_weight = fitness_weight
 
+        if self.constraints == None:
+            self.constraints = [None for i in xrange(len(spice_commands))]
+
         if constraint_weight==None:
             self.constraint_weight=[100 for i in xrange(len(spice_commands))]
         else:
