@@ -57,10 +57,10 @@ def _constraint1(f,x,k,**kwargs):
 population=2000#Too small population might not converge, or converges to local minimum, but is faster to simulate
 max_parts=10#Maximum number of parts
 mutation_rate=0.75
-crossover_rate=0.10
+crossover_rate=0.05
 #selection_weight=1.5
 fitness_function=[_fitness_function1,_fitness_function1]
-fitness_weight=[{'vdb(n2)':lambda x,**kwargs:100 if x<1e4 else 20},{'vdb(n2)':lambda x,**kwargs:100 if x<1e4 else 20},{'i(vin)':2,'v(n2)':0,'i(vc)':1,'i(ve)':1}]
-constraints=[_constraint1,_constraint1]
-constraint_weight=[100,100,1000]
+fitness_weight=[{'vdb(n2)':lambda x,**kwargs:10 if x<1e4 else 1}]
+constraints=[_constraint1]
+constraint_weight=[1000]
 plot_yrange={'vdb(n2)':(-120,20),'i(vin)':(-0.2,0.2),'i(vc)':(-0.2,0.2),'i(ve)':(-0.2,0.2),'v(n2)':(-2,2)}
