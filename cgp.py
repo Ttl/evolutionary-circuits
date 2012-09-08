@@ -192,7 +192,14 @@ class Chromosome:
         program = self.spice_input(options)
         thread = circuits.spice_thread(program)
         thread.start()
-        thread.join(simulation_timeout)
+        #Extra time to make sure that plotting succeeds
+        thread.join(10*simulation_timeout)
+        if thread.is_alive():
+            try:
+                thread.spice.terminate()
+            except OSError:
+                pass
+            thread.join()
         return thread.result
 
 def multipliers(x):
@@ -305,6 +312,9 @@ class CGP:
         self.gradual_constraints = kwargs['gradual_constraints']
         self.constraint_ramp = kwargs['constraint_ramp']
         self.plot_all_gens = kwargs['plot_every_generation']
+
+        self.def_scoring = kwargs['default_scoring']
+        self.c_rank = kwargs['custom_scoring']
 
         if type(self.c_free_gens) not in (int,long,float):
             raise Exception('constraint_free_generations must be a number')
@@ -434,8 +444,11 @@ class CGP:
                             scores[THREADS*t+e]=inf
                         else:
                             if scores[THREADS*t+e]<inf:
-                                for k in thread.result[1].keys():
-                                    scores[THREADS*t+e]+=self._rank(thread.result[1],i,k,extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
+                                if self.c_rank!=None:
+                                    scores[THREADS*t+e]+=self.c_rank(thread.result[1],extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
+                                if self.def_scoring:
+                                    for k in thread.result[1].keys():
+                                        scores[THREADS*t+e]+=self._rank(thread.result[1],i,k,extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
                             thread.result = None
             #print 'Skipped: {}'.format(skipped)
             if errors + skipped == self.pool_size:
@@ -656,7 +669,8 @@ class CGP:
 
         if self.plot_all_gens or self.pool[0][0]<self.alltimebest[0]:
                 print strftime("%Y-%m-%d %H:%M:%S")
-                print 'Extra values: '+str(self.pool[0][1].extra_value)
+                if self.pool[0][1].extra_value != None:
+                    print 'Extra values: '+str(self.pool[0][1].extra_value)
                 print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
                 #print 'Cache size: %d/%d'%(self.cache_size,self.cache_max_size)+', Cache hits',self.cache_hits
                 self.alltimebest=self.pool[0]
@@ -710,6 +724,7 @@ class CGP:
                         plt.communicate(str(data))
         except:
             print "Plotting failed"
+            raise
 
 
     def run(self):
@@ -758,7 +773,9 @@ def load_settings(filename):
                         'gradual_constraints':True,
                         'constraint_ramp':20,
                         'random_circuits':0.01,
-                        'plot_every_generation':False
+                        'plot_every_generation':False,
+                        'default_scoring':True,
+                        'custom_scoring':None,
                         }
     settings = default_settings.copy()
     temp = {}
