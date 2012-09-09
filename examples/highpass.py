@@ -1,3 +1,17 @@
+"""This file tries to evolve an active high-pass filter with cutoff frequency of 
+1kHz. Devices allowed are: resistors, capacitors and TL071 opamps.
+
+The reason there are so many different simulations is to make sure that load
+resistance doesn't change the frequency response too much, make sure that filter
+isn't unstable. Last simulation is to make sure that filter doesn't oscillate
+without input signal.
+
+A decent filter is usually found around generations 20-60.
+
+Requires ngspice version 24 or newer compiled with xspice support.
+
+TODO: Add a simulation to measure the output signal distortion.
+"""
 from math import log
 
 title = 'High-pass_filter'
@@ -119,8 +133,6 @@ parts = {'R':{'nodes':2,'value':1,'min':0,'max':6,'cost':0.1},
         'C':{'nodes':2,'value':1,'min':-10,'max':-3,'cost':0.1},
          #'L':{'nodes':2,'value':1,'min':-9,'max':-3},
          'X':{'nodes':3,'spice':'nc ne TL071','cost':0.5},
-         #'Q1':{'nodes':3,'spice':'2N3904'},#Uncomment to allow BJT transistors
-         #'Q2':{'nodes':3,'spice':'2N3906'}
          }
 
 def _fitness_function1(f,k,**kwargs):
@@ -154,9 +166,9 @@ def _constraint2(f,x,k,**kwargs):
         else:
             return abs(x)<1.1
     if k=='i(vin)':
-        return abs(x)<0.1
+        return abs(x)<0.01+0.1/kwargs['generation']
     if k[0]=='i':
-        return abs(x)<0.2
+        return abs(x)<0.02+0.1/kwargs['generation']
     return True
 
 def _constraint3(f,x,k,**kwargs):
@@ -166,9 +178,9 @@ def _constraint3(f,x,k,**kwargs):
         else:
             return abs(x)<0.1
     if k=='i(vin)':
-        return abs(x)<0.1
+        return abs(x)<0.01+0.1/kwargs['generation']
     if k[0]=='i':
-        return abs(x)<0.2
+        return abs(x)<0.02+0.1/kwargs['generation']
     return True
 
 def _constraint4(f,x,k,**kwargs):
@@ -178,17 +190,20 @@ def _constraint4(f,x,k,**kwargs):
         else:
             return abs(x)<0.03
     if k[0]=='i':
-        return abs(x)<0.2
+        return abs(x)<0.02+0.1/kwargs['generation']
     return True
 
-population=1000#Too small population might not converge, or converges to local minimum, but is faster to simulate
-max_parts=12#Maximum number of parts
+population=2000#Too small population might not converge, or converges to local minimum, but is faster to simulate
+max_parts=12
 nodes=10
 mutation_rate=0.75
 crossover_rate=0.05
-#selection_weight=1.5
+gradual_constraints = True
+constraint_free_generations = 1
+constraint_ramp = 20
+plot_every_generation = True
 fitness_function=[_fitness_function1,_fitness_function1,_fitness_function2,_fitness_function2,_fitness_function2]
-fitness_weight=[{'vdb(n2)':lambda x,**kwargs:100 if 100<x else 20},{'vdb(n2)':lambda x,**kwargs:100 if 100<x else 20},{'i(vin)':2,'v(n2)':0,'i(vc)':1,'i(ve)':1},{'i(vin)':2,'v(n2)':20,'i(vc)':1,'i(ve)':1},{'i(vin)':5,'v(n2)':100,'i(vc)':2,'i(ve)':2}]
+fitness_weight=[{'vdb(n2)':lambda x,**kwargs:10 if 100<x else 3},{'vdb(n2)':lambda x,**kwargs:10 if 100<x else 3},{'i(vin)':0.1,'v(n2)':0,'i(vc)':0.05,'i(ve)':0.05},{'i(vin)':0.1,'v(n2)':5,'i(vc)':0.05,'i(ve)':0.05},{'i(vin)':0.5,'v(n2)':10,'i(vc)':0.1,'i(ve)':0.1}]
 constraints=[_constraint1,_constraint1,_constraint2,_constraint3,_constraint4]
-constraint_weight=[10000,10000,100000,10000,1000]
+constraint_weight=[1000,1000,10000,1000,1000]
 plot_yrange={'vdb(n2)':(-120,20),'i(vin)':(-0.2,0.2),'i(vc)':(-0.2,0.2),'i(ve)':(-0.2,0.2),'v(n2)':(-2,2)}
