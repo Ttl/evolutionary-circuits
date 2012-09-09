@@ -487,7 +487,7 @@ class CGP:
         con_penalty=0
         for p in xrange(1,len(f)):
             try:
-                total+=weight( f[p],extra=extra, generation=self.generation)*(f[p]-f[p-1])*abs( func(f[p],k,extra=extra, generation=self.generation) - v[p] )
+                total+=weight( f[p],extra=extra, generation=self.generation)*(f[p]-f[p-1])*( func(f[p],k,extra=extra, generation=self.generation) - v[p] )**2
             except TypeError:
                 print 'Fitness function returned invalid value'
                 raise
