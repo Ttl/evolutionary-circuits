@@ -6,39 +6,45 @@ Automatically generates analog circuits using evolutionary algorithms.
 Requires ngspice. Also probably only works on a linux OS.
 
 Interesting stuff happens in cgp.py, circuits.py is used to communicate with
-ngspice, plot.py is not used by the program but it can be used to plot outputs of
-ngspice. getch.py gets a single character from output.
+ngspice, plotting.py is used to implement plotting with matplotlib when running
+with pypy. getch.py gets a single character from output.
 
-Work is currently very much in progress and documentation is missing. This is
-currently very hard to use and requires a knowledge of how to use SPICE.
+Work is currently in progress and documentation is missing. This is
+currently hard to use and requires a knowledge of how to use SPICE.
 
-Simulation can be stopped with a keyboard interrupt and it can be also resumed
-without losing progress.
+Simulation can be stopped with a keyboard interrupt. Progress is saved after
+every generation and can be continued by just running the script again.
 
 #Installing
 
 ##ngspice
 
 Download [ngpspice](http://ngspice.sourceforge.net/) either the git version or the
-current stable release, whichever you want.
+current stable release, whichever you want. Git release often has performance
+improvements and possibly new features, but it also comes with the best bugs. If
+you are new to using SPICE it might be better to install latest stable
+version(As of 2012-09-10 this is version 24).
 
 Compile and install ngspice with following commands:
 
      $ mkdir release
      $ cd release
-     $ ../configure --disable-debug
-     $ make 2>&1 | tee make.log
+     $ ../configure --enable-xspice --disable-debug
+     $ make
      $ sudo make install
 
 #Usage
 
 The program is used by saving simulation settings in separate file and
-running it with command: "python cgp.py <filename of settings>". See inverter.py
-for example settings.
+running it with command: "pypy cgp.py <filename>". See examples
+folder for example scripts.
+
+Using pypy is recommended as it uses significantly less memory and runs a little
+bit faster, but the program also works in python.
 
 ##Simulation settings
 
-Every name starting with underscore("\_") is ignored and they can be used for
+Every name starting with underscore("\_") is ignored by cgp.py and they can be used for
 internal functions in settings file.
 
 Required settings are:
@@ -64,18 +70,49 @@ Optional settings are:
   1.
 * mutation\_rate: Probability of mutations. Default is 0.7.
 * crossover\_rate: Probability of crossovers. Default is 0.2.
-* fitness\_weight: List of dictionaries. One list elements corresponds to one
+* fitness\_weight: Weightings for fitness functions. Can be either numbers or
+  functions of type "lambda x,\*\*kwargs", where x is simulation x-axis value,
+  kwargs has keys: "extra\_value", "generation", possibly more as they are added.
+  List of dictionaries. One list elements corresponds to one
   SPICE simulation. Dictionary keys are measurements('v(n2)','i(n1')...), and
   values are the weights the measurement is multiplied. Value can also be
   a function that takes input value and returns a number.
 * extra\_value: List of tuples that are minimum and maximum of extra values that chromosome can hold. This is returned
   to fitness function as argument extra\_value. This can be used as example for
   transition voltage of an inverter.
-* log: Filename where simulation log is saved.
+* log\_file: Filename where simulation log is saved.
 * plot\_titles: List of dictionaries of plot titles.
 * plot\_yrange: List of dictionaries of plot Y-axis ranges. Can be useful if you
   turn the output plots into an animation, this avoids the rescaling of the
   axes.
+* selection\_weight: Higher values make better performing circuits being picked
+  more often and smaller values make selection more fair, 0.0 makes selection completely random.
+  Default is 1.0 and values should be bigger than zero. Usable range us probably from 0.5 to 1.5. Don't set this too high or entropy in the gene pool is lost and genetic algorithm doesn't converge.
+  You should only touch this if you know what you are doing.
+* constraint\_weight: Weights for constraints, similar to fitness\_weight.
+  Score added is percentage of values not passing times this score.
+* max\_mutations: Maximum number of mutations without re-evaluating the fitness
+  function.
+* constraint\_free\_generations: Number of generations before constraint
+  functions are enabled.
+* gradual\_constraints: Apply constraint function scores gradually, default is
+  True.
+* constraint\_ramp: Number of generations before constraint scores are at
+  maximum levels. Does nothing if gradual\_constraints if False.
+* random\_circuits: Percentage of random circuits in new generation. Default is
+  0.01(1%).
+* plot\_every\_generation: True to plot every generation even if the best score
+  is same or worse than the last generation. Useful is weights increase when
+  current generation increases, doesn't need to be enabled for
+  "gradual\_constraints" to work properly. Default is False.
+* default\_scoring: Use default scoring(Squared error difference and weighting).
+* custom\_scoring: User defined scoring function. None if none is given. Both
+  user defined and default scoring can be active at the same time, in this case
+  scores are summed. Function should take two arguments: "result" and
+  \*\*kwargs. result is dictionary of measurements, each dictionary value is
+  tuple of two lists: simulation x-axis and y-axis values. Example:
+  {'v(n2)':[0.0,0.1,0.2],[1.0,1.1,1.2]}. Should return a score that has a type
+  of float.
 
 First you need to decide what components you want to allow and add them to
 the "parts" dictionary. The dictionary key is the name of component in SPICE, and the value
@@ -122,7 +159,7 @@ example has a current and voltage measurements:
         elif k[0]=='i': #Current
             return 1e-3 if kwargs['generation]<10 else 0
 
-Discontinous fitness function that is 0 before time is 100ns and 5 after it:
+Discontinuous fitness function that is 0 before time is 100ns and 5 after it:
 
     def goal(t,k,**kwargs):
         #t is now time
@@ -142,4 +179,5 @@ measurements:
     fitness_weight=[{'v(n2)':1},{'v(n2)':1,'i(vin)':50},{'v(n2)':1},{'v(n2)':0.05}]
 
 
-See the "inverter.py" for an example.
+See examples folder for examples. Due to the rapid development examples might not
+always work, but I try my best to keep them up to date.
