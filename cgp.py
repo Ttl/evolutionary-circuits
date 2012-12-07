@@ -17,6 +17,7 @@ from os.path import join as path_join
 import os
 import getch
 import sys
+from math import log10
 inf = 1e30
 simulation_timeout = 0.5#seconds
 THREADS = 4
@@ -35,8 +36,12 @@ class Circuit_gene:
         return self.spice_name+str(id(self))+' '+' '.join(map(str,self.nodes))+' '+self.spice_options
 
 def log_dist(a,b):
-    #Uniform random number in logarithmic scale
-    return random.uniform(1,10)*(10**(random.uniform(a,b)))
+    """Generates exponentially distributed random numbers.
+    Gives better results for resistor, capacitor and inductor values
+    than uniform distribution."""
+    if a <= 0 or a>b:
+        raise ValueError("Value out of range. Valid range is (0,infinity).")
+    return 10**(random.uniform(log10(a),log10(b)))
 
 def same(x):
     #True if all elements are same
@@ -509,8 +514,8 @@ class CGP:
         if self.generation%20>17:
             if circuit!=None and con_filled:
                 total+=sum([element.cost if hasattr(element,'cost') else 0.1 for element in circuit.elements])
-        if con_penalty>1e5:
-            con_penalty=1e5
+        #if con_penalty>1e5:
+        #    con_penalty=1e5
         if self.c_free_gens>self.generation:
             return 1000*total+self.constraint_weight[i]*10
         if self.gradual_constraints:

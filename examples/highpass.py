@@ -125,13 +125,12 @@ Rload n2 0 1k
 #Dictionary of the availabe parts
 #nodes: number of terminals
 #value: Device has a value, eg. resistance, inductance
-#min and max: Range for value. Minimum value is 1.0*10**(min)
-#             and maximum is 10.0*10**(max)
+#min and max: Range for value.
 #spice: This is added after anything else, can be used to specify device model
 #or some other options for the device
-parts = {'R':{'nodes':2,'value':1,'min':0,'max':6,'cost':0.1},
-        'C':{'nodes':2,'value':1,'min':-10,'max':-3,'cost':0.1},
-         #'L':{'nodes':2,'value':1,'min':-9,'max':-3},
+parts = {'R':{'nodes':2,'value':1,'min':1,'max':1e6,'cost':0.1},
+        'C':{'nodes':2,'value':1,'min':1e-10,'max':1e-3,'cost':0.1},
+         #'L':{'nodes':2,'value':1,'min':1e-9,'max':1e-3},
          'X':{'nodes':3,'spice':'nc ne TL071','cost':0.5},
          }
 

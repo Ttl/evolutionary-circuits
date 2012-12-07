@@ -1,5 +1,5 @@
-"""This file tries to evolve an analog square root function. Allowed components 
-are resistors and NMOS and PMOS transistors. Result doesn't need to 
+"""This file tries to evolve an analog square root function. Allowed components
+are resistors and NMOS and PMOS transistors. Result doesn't need to
 be exactly the square root of the input, it can be from 0.8 to 2.0 times the
 square root.
 """
@@ -77,9 +77,9 @@ Vin n1 0 PULSE(4 0 10u 5u 5u 1 1)
 ]
 
 #Dictionary of the availabe parts
-parts = {'R':{'nodes':2,'value':1,'min':1,'max':6,'cost':0.1},
-        #'C':{'nodes':2,'value':1,'min':-13,'max':-6,'cost':0.1},
-         #'L':{'nodes':2,'value':1,'min':-9,'max':-3},
+parts = {'R':{'nodes':2,'value':1,'min':1,'max':1e6,'cost':0.1},
+        #'C':{'nodes':2,'value':1,'min':1e-13,'max':1e-6,'cost':0.1},
+         #'L':{'nodes':2,'value':1,'min':1e-9,'max':1e-3},
          #'D1':{'nodes':2,'spice':'1N4148'},
          #'Q1':{'nodes':3,'spice':'2N3904'},
          #'Q2':{'nodes':3,'spice':'2N3906'},

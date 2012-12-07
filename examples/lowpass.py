@@ -1,6 +1,6 @@
 from math import log
 
-title = 'Low-pass2012-08-22'
+title = 'Low-pass'
 
 #Put SPICE device models used in the simulations here.
 
@@ -24,13 +24,12 @@ Rload n2 0 {aunif(1k,500)}
 #Dictionary of the availabe parts
 #nodes: number of terminals
 #value: Device has a value, eg. resistance, inductance
-#min and max: Range for value. Minimum value is 1.0*10**(min)
-#             and maximum is 10.0*10**(max)
+#min and max: Range for value.
 #spice: This is added after anything else, can be used to specify device model
 #or some other options for the device
-parts = {'R':{'nodes':2,'value':1,'min':0,'max':6},
-         'C':{'nodes':2,'value':1,'min':-10,'max':-3},
-         'L':{'nodes':2,'value':1,'min':-9,'max':-3},
+parts = {'R':{'nodes':2,'value':1,'min':1,'max':1e6},
+         'C':{'nodes':2,'value':1,'min':1e-10,'max':1e-3},
+         'L':{'nodes':2,'value':1,'min':1e-9,'max':1e-3},
          }
 
 def _fitness_function1(f,k,**kwargs):
@@ -44,10 +43,8 @@ def _fitness_function1(f,k,**kwargs):
 
 def _constraint1(f,x,k,**kwargs):
     if k[0]=='v':
-        if f>10000:
-            return x<-40
-        elif f>1000:
-            return x<0
+        if f>1000:
+            return x<=0
         elif f<100:
             return -3<x<3
         else:
@@ -55,12 +52,15 @@ def _constraint1(f,x,k,**kwargs):
     return True
 
 population=2000#Too small population might not converge, or converges to local minimum, but is faster to simulate
-max_parts=10#Maximum number of parts
+max_parts=8#Maximum number of parts
+#Enabling this makes the program ignore constraints for few first generations.
+#Which makes the program try to fit right side first ignoring pass-band.
+gradual_constraints = False
 mutation_rate=0.75
 crossover_rate=0.05
 #selection_weight=1.5
 fitness_function=[_fitness_function1,_fitness_function1]
-fitness_weight=[{'vdb(n2)':lambda x,**kwargs:10 if x<1e4 else 1}]
+fitness_weight=[{'vdb(n2)':lambda x,**kwargs:100 if x<3e3 else 0.1}]
 constraints=[_constraint1]
-constraint_weight=[1000]
+constraint_weight=[10000]
 plot_yrange={'vdb(n2)':(-120,20),'i(vin)':(-0.2,0.2),'i(vc)':(-0.2,0.2),'i(ve)':(-0.2,0.2),'v(n2)':(-2,2)}
