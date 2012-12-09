@@ -51,6 +51,13 @@ def _constraint1(f,x,k,**kwargs):
             return -0.5<x<0.5
     return True
 
+#This circuit will be added to the first generation
+#Circuit below scores poorly, because it fails to fulfill the constraints
+seed = """
+R1 n1 n2 1k
+C1 n2 0 150n
+"""
+
 population=2000#Too small population might not converge, or converges to local minimum, but is faster to simulate
 max_parts=8#Maximum number of parts
 #Enabling this makes the program ignore constraints for few first generations.
