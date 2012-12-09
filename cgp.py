@@ -1,7 +1,5 @@
 try:
     PLOTTING='matplotlib'
-    import matplotlib
-    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 except:
     import subprocess
@@ -630,8 +628,8 @@ class CGP:
                     best_value = (inf,None)
                     for c,value in enumerate(self.extra_value):
                         #10 test values for one extra_value
-                        for i in xrange(11):
-                            ev = value[0]+(value[1]-value[0])*(i/10.0)
+                        for x in xrange(11):
+                            ev = value[0]+(value[1]-value[0])*(x/10.0)
                             newpool[i].extra_value[c] = ev
                             score = 0
                             for command in xrange(len(self.spice_commands)):
@@ -642,8 +640,17 @@ class CGP:
                                 #Better value found
                                 best_value = (score,ev)
                         #Set the extra value to the best one found
-                        print "Seed circuit score: {}, extra_value: {}".format(best_value[0],best_value[1])
+                        print "Seed circuit {}, best found extra_value {}: {}".format(i,c,best_value[1])
                         newpool[i].extra_value[c] = best_value[1]
+                #No extra values
+                score = 0
+                for command in xrange(len(self.spice_commands)):
+                    v = newpool[i].evaluate(self.spice_commands[command])[1]
+                    for k in v.keys():
+                        score += self._rank(v,command,k,extra=newpool[i].extra_value)
+                print "Seed circuit {}, score: {}".format(i,score)
+                self.plotbest(newpool,0)
+
         else:
             if self.elitism!=0:
                 #Pick self.elitism amount of best performing circuits to the next generation
@@ -725,15 +732,23 @@ class CGP:
         """Returns average score of the whole pool."""
         return sum(i[0] for i in self.pool)/float(self.pool_size)
 
-    def plotbest(self):
+    def plotbest(self,pool=None,nth=0):
+        """Plot best circuit in the current pool.
+        Alternatively plot nth circuit from the pool given in arguments."""
+        if pool==None:
+            pool = self.pool
+        try:
+                    circuit = pool[nth][1]
+        except AttributeError:
+                    #Not scored yet
+                    circuit = pool[nth]
         try:
             if PLOTTING=='matplotlib':
-                    for c in xrange(len(self.spice_commands)):
-                        self.save_plot(
-                                self.pool[0][1],
-                                i=c,name=str(c))
+                for c in xrange(len(self.spice_commands)):
+                    self.save_plot(
+                            circuit,
+                            i=c,name=str(c))
             elif PLOTTING=='external':
-                circuit = self.pool[0][1]
                 for i in xrange(len(self.spice_commands)):
                     v = circuit.evaluate(self.spice_commands[i])[1]
                     for k in v.keys():
