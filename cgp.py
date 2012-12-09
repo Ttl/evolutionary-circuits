@@ -17,6 +17,8 @@ from os.path import join as path_join
 import os
 import getch
 import sys
+#SPICE to python circuit parser
+from spice_parser import *
 from math import log10
 inf = 1e30
 simulation_timeout = 0.5#seconds
@@ -24,16 +26,15 @@ THREADS = 4
 
 class Circuit_gene:
     """Represents a single component"""
-    def __init__(self,name,nodes,cost,*args):
+    def __init__(self,name,nodes,cost=0,*args):
         #Name of the component(eg. "R1")
         self.spice_name = name
         #N-tuple of values
         self.values = args
-        self.spice_options = ' '.join(map(str,*args))
         self.nodes = nodes
         self.cost = cost
     def __repr__(self):
-        return self.spice_name+str(id(self))+' '+' '.join(map(str,self.nodes))+' '+self.spice_options
+        return self.spice_name+str(id(self))+' '+' '.join(map(str,self.nodes))+' '+' '.join(map(str,*self.values))
 
 def log_dist(a,b):
     """Generates exponentially distributed random numbers.
@@ -363,8 +364,6 @@ class CGP:
         else:
             self.plot_constraints=True
 
-
-
         self.pool_size=population-population%THREADS+THREADS
         self.parts_list = parts
         self.generation=0
@@ -382,6 +381,17 @@ class CGP:
 
         #Directory to save files in
         self.directory = title
+
+        #Generate seed circuits
+        seed = kwargs['seed']
+        self.seed_circuits = []
+        if seed!=None:
+            if type(seed)==str:
+                seed = [seed]
+            for element in seed:
+                self.seed_circuits.append(parse_circuit(element,self.parts_list))
+
+
 
     def parse_sim_options(self,option):
         """Parses spice simulation commands for ac,dc,trans and temp words.
@@ -612,6 +622,28 @@ class CGP:
         if self.generation==1:
             #Randomly generate some circuits
             newpool=[Chromosome(self.max_parts,self.parts_list,self.nodes,extra_value=self.extra_value) for i in xrange(self.pool_size)]
+            #Generate seed circuits
+            for i,circuit in enumerate(self.seed_circuits):
+                newpool[i].elements=circuit
+                #Set seed circuit extra values
+                if self.extra_value!=None:
+                    best_value = (inf,None)
+                    for c,value in enumerate(self.extra_value):
+                        #10 test values for one extra_value
+                        for i in xrange(11):
+                            ev = value[0]+(value[1]-value[0])*(i/10.0)
+                            newpool[i].extra_value[c] = ev
+                            score = 0
+                            for command in xrange(len(self.spice_commands)):
+                                v = newpool[i].evaluate(self.spice_commands[command])[1]
+                                for k in v.keys():
+                                    score += self._rank(v,command,k,extra=newpool[i].extra_value)
+                            if 0 < score < best_value[0]:
+                                #Better value found
+                                best_value = (score,ev)
+                        #Set the extra value to the best one found
+                        print "Seed circuit score: {}, extra_value: {}".format(best_value[0],best_value[1])
+                        newpool[i].extra_value[c] = best_value[1]
         else:
             if self.elitism!=0:
                 #Pick self.elitism amount of best performing circuits to the next generation
@@ -781,6 +813,7 @@ def load_settings(filename):
                         'plot_every_generation':False,
                         'default_scoring':True,
                         'custom_scoring':None,
+                        'seed':None,
                         }
     settings = default_settings.copy()
     temp = {}
