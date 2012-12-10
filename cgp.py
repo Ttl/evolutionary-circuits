@@ -19,7 +19,6 @@ import sys
 from spice_parser import *
 from math import log10
 inf = 1e30
-simulation_timeout = 0.5#seconds
 THREADS = 4
 
 class Circuit_gene:
@@ -191,13 +190,13 @@ class Chromosome:
             program+=str(i)+'\n'
         return program
 
-    def evaluate(self,options):
+    def evaluate(self,options,timeout):
         """Used in plotting, when only 1 circuits needs to be simulated"""
         program = self.spice_input(options)
         thread = circuits.spice_thread(program)
         thread.start()
         #Extra time to make sure that plotting succeeds
-        thread.join(10*simulation_timeout)
+        thread.join(10*timeout)
         if thread.is_alive():
             try:
                 thread.spice.terminate()
@@ -311,6 +310,7 @@ class CGP:
                 #TODO write the current temperature in the plot
         print
 
+        self.timeout = kwargs['timeout']
         self.c_free_gens = kwargs['constraint_free_generations']
         self.rnd_circuits = kwargs['random_circuits']
         self.gradual_constraints = kwargs['gradual_constraints']
@@ -415,6 +415,7 @@ class CGP:
         scores  = [0 for i in xrange(self.pool_size)]
 
         lasterror = None
+        timeouts = 0
         for i in xrange(len(self.spice_commands)):
             errors = 0
             skipped = 0
@@ -432,8 +433,9 @@ class CGP:
                         thread.start()
                 for e,thread in enumerate(threads):
                     if scores[THREADS*t+e]<inf:
-                        thread.join(simulation_timeout)
+                        thread.join(self.timeout)
                         if thread.is_alive():
+                            timeouts += 1
                             try:
                                 thread.spice.terminate()
                             except OSError:#Thread died before we could kill it
@@ -442,23 +444,31 @@ class CGP:
 
                 for e,thread in enumerate(threads):
                     if thread==None:
+                        #Something went wrong, just ignore it
+                        scores[THREADS*t+e]=inf
                         skipped+=1
                         continue
                     if scores[THREADS*t+e]>=inf:
+                        #If score is more than infinity don't bother doing more runs
                         skipped+=1
                     else:
                         if thread.result==None:
+                            #Error in simulation
                             errors+=1
                             lasterror = "Simulation timedout"
                             scores[THREADS*t+e]=inf
                         elif thread.result[1]=={}:
+                            #SPICE didn't return anything
                             errors+=1
                             lasterror = thread.result[0]
                             scores[THREADS*t+e]=inf
                         else:
+                            #Everything seems to be fine, calculate scores
                             if scores[THREADS*t+e]<inf:
+                                #Custom scoring function
                                 if self.c_rank!=None:
                                     scores[THREADS*t+e]+=self.c_rank(thread.result[1],extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
+                                #Default scoring function
                                 if self.def_scoring:
                                     for k in thread.result[1].keys():
                                         scores[THREADS*t+e]+=self._rank(thread.result[1],i,k,extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
@@ -467,7 +477,15 @@ class CGP:
             if errors + skipped == self.pool_size:
                 #All simulations failed
                 raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
-
+        if timeouts != 0:
+            print '{} simulation(s) timed out'.format(timeouts)
+        if timeouts > len(self.pool)/10:
+            if timeouts > len(self.pool)/2:
+                self.timeout *= 1.5
+                print "Increasing timeout length by 50%, to {}".format(self.timeout)
+            else:
+                self.timeout *= 1.25
+                print "Increasing timeout length by 25%, to {}".format(self.timeout)
         return sorted([(scores[i],pool[i]) for i in xrange(self.pool_size)])
 
     def _rank(self,x,i,k,extra=None,circuit=None):
@@ -543,7 +561,7 @@ class CGP:
         print
 
     def save_plot(self,circuit,i,name='',**kwargs):
-        v = circuit.evaluate(self.spice_commands[i])[1]
+        v = circuit.evaluate(self.spice_commands[i],self.timeout)[1]
         #For every measurement in results
         for k in v.keys():
             score = self._rank(v,i,k,extra=circuit.extra_value)
@@ -633,7 +651,7 @@ class CGP:
                             newpool[i].extra_value[c] = ev
                             score = 0
                             for command in xrange(len(self.spice_commands)):
-                                v = newpool[i].evaluate(self.spice_commands[command])[1]
+                                v = newpool[i].evaluate(self.spice_commands[command],self.timeout)[1]
                                 for k in v.keys():
                                     score += self._rank(v,command,k,extra=newpool[i].extra_value)
                             if 0 < score < best_value[0]:
@@ -645,7 +663,7 @@ class CGP:
                 #No extra values
                 score = 0
                 for command in xrange(len(self.spice_commands)):
-                    v = newpool[i].evaluate(self.spice_commands[command])[1]
+                    v = newpool[i].evaluate(self.spice_commands[command],self.timeout)[1]
                     for k in v.keys():
                         score += self._rank(v,command,k,extra=newpool[i].extra_value)
                 print "Seed circuit {}, score: {}".format(i,score)
@@ -692,6 +710,8 @@ class CGP:
                 newsize+=1
         start = time()
         self.pool = self.rank_pool(newpool)
+        #for i in self.pool:
+        #    print i
 
         if (self.overflowed > self.pool_size/10):
             print "{0}\% of the circuits score overflowed, can't continue reliably. Try to decrease scoring weights.".format(100*float(self.overlflowed)/self.pool_size)
@@ -750,7 +770,7 @@ class CGP:
                             i=c,name=str(c))
             elif PLOTTING=='external':
                 for i in xrange(len(self.spice_commands)):
-                    v = circuit.evaluate(self.spice_commands[i])[1]
+                    v = circuit.evaluate(self.spice_commands[i],self.timeout)[1]
                     for k in v.keys():
                         freq = v[k][0]
                         gain = v[k][1]
@@ -829,6 +849,7 @@ def load_settings(filename):
                         'default_scoring':True,
                         'custom_scoring':None,
                         'seed':None,
+                        'timeout':1.0,
                         }
     settings = default_settings.copy()
     temp = {}
