@@ -479,8 +479,8 @@ class CGP:
                 raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
         if timeouts != 0:
             print '{} simulation(s) timed out'.format(timeouts)
-        if timeouts > len(self.pool)/10:
-            if timeouts > len(self.pool)/2:
+        if timeouts > self.pool_size/10:
+            if timeouts > self.pool_size/2:
                 self.timeout *= 1.5
                 print "Increasing timeout length by 50%, to {}".format(self.timeout)
             else:
