@@ -382,6 +382,7 @@ class CGP:
 
         #Generate seed circuits
         seed = kwargs['seed']
+        self.seed_copies = kwargs['seed_copies']
         self.seed_circuits = []
         if seed!=None:
             if type(seed)==str:
@@ -436,6 +437,12 @@ class CGP:
                         thread.join(self.timeout)
                         if thread.is_alive():
                             timeouts += 1
+                            if self.generation==1:
+                                if THREADS*t+e<len(self.seed_circuits):
+                                    print "Seed circuit simulation timed out. Aborting."
+                                    print "Increase simulation timeout with 'timeout=?' command"
+
+                                    exit()
                             try:
                                 thread.spice.terminate()
                             except OSError:#Thread died before we could kill it
@@ -537,9 +544,9 @@ class CGP:
         total/=y
         if total<0:
             return inf
-        if self.generation%20>17:
+        if self.generation>5:
             if circuit!=None and con_filled:
-                total+=sum([element.cost if hasattr(element,'cost') else 0.1 for element in circuit.elements])
+                total+=sum([element.cost if hasattr(element,'cost') else 0 for element in circuit.elements])
         #if con_penalty>1e5:
         #    con_penalty=1e5
         if self.c_free_gens>self.generation:
@@ -668,6 +675,8 @@ class CGP:
                         score += self._rank(v,command,k,extra=newpool[i].extra_value)
                 print "Seed circuit {}, score: {}".format(i,score)
                 self.plotbest(newpool,0)
+                for copy in xrange(self.seed_copies-1):
+                    newpool[copy*len(self.seed_circuits)+i] = deepcopy(newpool[i])
 
         else:
             if self.elitism!=0:
@@ -849,6 +858,7 @@ def load_settings(filename):
                         'default_scoring':True,
                         'custom_scoring':None,
                         'seed':None,
+                        'seed_copies':1,
                         'timeout':1.0,
                         }
     settings = default_settings.copy()
