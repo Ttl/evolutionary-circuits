@@ -703,11 +703,15 @@ class CGP:
                 #Generate new circuits randomly
                 newpool.append(Chromosome(self.max_parts,self.parts_list,self.nodes,extra_value=self.extra_value))
                 newsize+=1
+
         start = time()
         try:
             l = len(newpool)
             cpool = multiprocessing.Pool()
-            p = cpool.map(self.rank_pool,[newpool[:l/4],newpool[l/4:l/2],newpool[l/2:3*l/4],newpool[3*l/4:]])
+            #Partition the pool
+            partitions = multiprocessing.cpu_count()
+            newpool = [newpool[i*l/partitions:(i+1)*l/partitions] for i in xrange(partitions)]
+            p = cpool.map(self.rank_pool,newpool)
             cpool.close()
         except (TypeError,KeyboardInterrupt):
             #Caught keyboardinterrupt. TypeError is raised when subprocess gets
