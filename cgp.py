@@ -15,11 +15,11 @@ from os.path import join as path_join
 import os
 import getch
 import sys
+import multiprocessing
 #SPICE to python circuit parser
 from spice_parser import *
 from math import log10
 inf = 1e30
-THREADS = 4
 
 class Circuit_gene:
     """Represents a single component"""
@@ -362,7 +362,7 @@ class CGP:
         else:
             self.plot_constraints=True
 
-        self.pool_size=population-population%THREADS+THREADS
+        self.pool_size=population
         self.parts_list = parts
         self.generation=0
         self.elitism=elitism
@@ -413,87 +413,73 @@ class CGP:
 
     def rank_pool(self,pool):
         """Multithreaded version of self.rank, computes scores for whole pool"""
-        scores  = [0 for i in xrange(self.pool_size)]
+        try:
+            scores  = [0]*len(pool)
 
-        lasterror = None
-        timeouts = 0
-        for i in xrange(len(self.spice_commands)):
-            errors = 0
-            skipped = 0
-            for t in xrange(self.pool_size/THREADS):
+            lasterror = None
+            timeouts = 0
+            for i in xrange(len(self.spice_commands)):
+                errors = 0
+                skipped = 0
+                for t in xrange(len(pool)):
+                    if scores[t]>=inf:
+                        continue
+                    thread = circuits.spice_thread(pool[t].spice_input(self.spice_commands[i]))
+                    thread.start()
+                    thread.join(self.timeout)
+                    if thread.is_alive():
+                        timeouts += 1
+                        if self.generation==1:
+                            if t<len(self.seed_circuits):
+                                print "Seed circuit simulation timed out. Aborting."
+                                print "Increase simulation timeout with 'timeout=?' command"
+                                exit()
+                        try:
+                            thread.spice.terminate()
+                        except OSError:#Thread died before we could kill it
+                            pass
 
-                threads = []
-                for e,a in enumerate(pool[t*THREADS:t*THREADS+THREADS]):
-                    if scores[THREADS*t+e]<inf:
-                        threads.append(circuits.spice_thread(a.spice_input(self.spice_commands[i])))
-                    else:
-                        threads.append(None)
-
-                for e,thread in enumerate(threads):
-                    if scores[THREADS*t+e]<inf:
-                        thread.start()
-                for e,thread in enumerate(threads):
-                    if scores[THREADS*t+e]<inf:
-                        thread.join(self.timeout)
-                        if thread.is_alive():
-                            timeouts += 1
-                            if self.generation==1:
-                                if THREADS*t+e<len(self.seed_circuits):
-                                    print "Seed circuit simulation timed out. Aborting."
-                                    print "Increase simulation timeout with 'timeout=?' command"
-
-                                    exit()
-                            try:
-                                thread.spice.terminate()
-                            except OSError:#Thread died before we could kill it
-                                pass
-                            thread.join()
-
-                for e,thread in enumerate(threads):
                     if thread==None:
                         #Something went wrong, just ignore it
-                        scores[THREADS*t+e]=inf
+                        scores[t]=inf
                         skipped+=1
                         continue
-                    if scores[THREADS*t+e]>=inf:
-                        #If score is more than infinity don't bother doing more runs
-                        skipped+=1
+                    if thread.result==None:
+                        #Error in simulation
+                        errors+=1
+                        lasterror = "Simulation timedout"
+                        scores[t]=inf
+                    elif thread.result[1]=={}:
+                        #SPICE didn't return anything
+                        errors+=1
+                        lasterror = thread.result[0]
+                        scores[t]=inf
                     else:
-                        if thread.result==None:
-                            #Error in simulation
-                            errors+=1
-                            lasterror = "Simulation timedout"
-                            scores[THREADS*t+e]=inf
-                        elif thread.result[1]=={}:
-                            #SPICE didn't return anything
-                            errors+=1
-                            lasterror = thread.result[0]
-                            scores[THREADS*t+e]=inf
-                        else:
-                            #Everything seems to be fine, calculate scores
-                            if scores[THREADS*t+e]<inf:
-                                #Custom scoring function
-                                if self.c_rank!=None:
-                                    scores[THREADS*t+e]+=self.c_rank(thread.result[1],extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
-                                #Default scoring function
-                                if self.def_scoring:
-                                    for k in thread.result[1].keys():
-                                        scores[THREADS*t+e]+=self._rank(thread.result[1],i,k,extra=pool[THREADS*t+e].extra_value,circuit=pool[t*THREADS+e])
-                            thread.result = None
-            #print 'Skipped: {}'.format(skipped)
-            if errors + skipped == self.pool_size:
-                #All simulations failed
-                raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
-        if timeouts != 0:
-            print '{} simulation(s) timed out'.format(timeouts)
-        if timeouts > self.pool_size/10:
-            if timeouts > self.pool_size/2:
-                self.timeout *= 1.5
-                print "Increasing timeout length by 50%, to {}".format(self.timeout)
-            else:
-                self.timeout *= 1.25
-                print "Increasing timeout length by 25%, to {}".format(self.timeout)
-        return sorted([(scores[i],pool[i]) for i in xrange(self.pool_size)])
+                        #Everything seems to be fine, calculate scores
+                        if scores[t]<inf:
+                            #Custom scoring function
+                            if self.c_rank!=None:
+                                scores[t]+=self.c_rank(thread.result[1],extra=pool[t].extra_value,circuit=pool[t])
+                            #Default scoring function
+                            if self.def_scoring:
+                                for k in thread.result[1].keys():
+                                    scores[t]+=self._rank(thread.result[1],i,k,extra=pool[t].extra_value,circuit=pool[t])
+                        thread.result = None
+                if errors + skipped == len(pool):
+                    #All simulations failed
+                    raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
+            if timeouts != 0:
+                print '{} simulation(s) timed out'.format(timeouts)
+            if timeouts > len(pool)/10:
+                if timeouts > len(pool)/2:
+                    self.timeout *= 1.5
+                    print "Increasing timeout length by 50%, to {}".format(self.timeout)
+                else:
+                    self.timeout *= 1.25
+                    print "Increasing timeout length by 25%, to {}".format(self.timeout)
+            return [(scores[i],pool[i]) for i in xrange(len(pool))]
+        except KeyboardInterrupt:
+            return
 
     def _rank(self,x,i,k,extra=None,circuit=None):
         """Score of single circuit against single fitness function
@@ -544,9 +530,9 @@ class CGP:
         total/=y
         if total<0:
             return inf
-        if self.generation>5:
-            if circuit!=None and con_filled:
-                total+=sum([element.cost if hasattr(element,'cost') else 0 for element in circuit.elements])
+        #if self.generation>5 and self.generation%5:
+        #    if circuit!=None and con_filled:
+        #        total+=sum([element.cost if hasattr(element,'cost') else 0 for element in circuit.elements])
         #if con_penalty>1e5:
         #    con_penalty=1e5
         if self.c_free_gens>self.generation:
@@ -718,10 +704,21 @@ class CGP:
                 newpool.append(Chromosome(self.max_parts,self.parts_list,self.nodes,extra_value=self.extra_value))
                 newsize+=1
         start = time()
-        self.pool = self.rank_pool(newpool)
-        #for i in self.pool:
-        #    print i
+        try:
+            l = len(newpool)
+            cpool = multiprocessing.Pool()
+            p = cpool.map(self.rank_pool,[newpool[:l/4],newpool[l/4:l/2],newpool[l/2:3*l/4],newpool[3*l/4:]])
+            cpool.close()
+        except (TypeError,KeyboardInterrupt):
+            #Caught keyboardinterrupt. TypeError is raised when subprocess gets
+            #keyboardinterrupt
+            cpool.terminate()
+            exit()
+        self.pool = []
+        for i in p:
+            self.pool.extend(i)
 
+        self.pool = sorted(self.pool)
         if (self.overflowed > self.pool_size/10):
             print "{0}\% of the circuits score overflowed, can't continue reliably. Try to decrease scoring weights.".format(100*float(self.overlflowed)/self.pool_size)
             exit()
@@ -797,8 +794,8 @@ class CGP:
                         except (KeyError,TypeError):
                             title = None
 
-                        if k in self.plot_yrange.keys():
-                            yrange = self.plot_yrange[k]
+                        if self.plot_yrange!=None and k in self.plot_yrange.keys():
+                                yrange = self.plot_yrange[k]
                         else:
                             yrange = None
                         data = ((freq,gain),k,goal_val,self.sim_type[i],self.generation,score,self.directory,title,yrange,self.log_plot[i],constraint_val,i)
