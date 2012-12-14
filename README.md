@@ -3,7 +3,7 @@ evolutionary-circuits
 
 Automatically generates analog circuits using evolutionary algorithms.
 
-Requires ngspice. Also probably only works on a linux OS.
+Requires ngspice, python and pypy (Yes, both of them). Also probably only works on a linux OS.
 
 Interesting stuff happens in cgp.py, circuits.py is used to communicate with
 ngspice, plotting.py is used to implement plotting with matplotlib when running
@@ -39,8 +39,8 @@ The program is used by saving simulation settings in separate file and
 running it with command: "pypy cgp.py <filename>". See examples
 folder for example scripts.
 
-Using pypy is recommended as it uses significantly less memory and runs a little
-bit faster, but the program also works in python.
+Using pypy is necessary. CPython raises PicklingError, because it can't 
+pickle functions inside classes, which is required for multithreading.
 
 ##Simulation settings
 
@@ -113,6 +113,11 @@ Optional settings are:
   tuple of two lists: simulation x-axis and y-axis values. Example:
   {'v(n2)':[0.0,0.1,0.2],[1.0,1.1,1.2]}. Should return a score that has a type
   of float.
+* timeout: SPICE simulation default timeout. This is raised automatically if
+  default is too low.
+* seed: Seed circuits to be added in the first generation. All of the devices
+  need to be in the parts dictionary. Can be a list or string.
+* seed\_copies: Copies of seed circuits.
 
 First you need to decide what components you want to allow and add them to
 the "parts" dictionary. The dictionary key is the name of component in SPICE, and the value
