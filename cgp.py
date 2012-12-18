@@ -82,7 +82,7 @@ def mutate_value(element,parts,rel_amount=None):
     else:
         try:
             temp = val[i]*(2*random.random-1)*rel_amount
-            if 10**parts[name]['min']<=temp<=10**parts[name]['max']*10.0:
+            if parts[name]['min']<=temp<=parts[name]['max']:
                 val[i] = temp
         except:
             return element
@@ -512,8 +512,9 @@ class CGP:
         for p in xrange(1,len(f)):
             try:
                 total+=weight( f[p],extra=extra, generation=self.generation)*(f[p]-f[p-1])*( func(f[p],k,extra=extra, generation=self.generation) - v[p] )**2
-            except TypeError:
-                print 'Fitness function returned invalid value'
+            except TypeError as t:
+                print 'Fitness function returned invalid value, while testing {} of simulation {}'.format(k,i)
+                print t
                 raise
             except OverflowError:
                 self.overflowed += 1
