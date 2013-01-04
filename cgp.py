@@ -17,193 +17,11 @@ import getch
 import sys
 import multiprocessing
 #SPICE to python circuit parser
-from spice_parser import *
-from math import log10
+#FIXME
+#from spice_parser import *
+import chromosomes
+from diff_evolve import *
 inf = 1e30
-
-class Circuit_gene:
-    """Represents a single component"""
-    def __init__(self,name,nodes,cost=0,*args):
-        #Name of the component(eg. "R1")
-        self.spice_name = name
-        #N-tuple of values
-        self.values = args
-        self.nodes = nodes
-        self.cost = cost
-    def __repr__(self):
-        return self.spice_name+str(id(self))+' '+' '.join(map(str,self.nodes))+' '+' '.join(map(str,*self.values))
-
-def log_dist(a,b):
-    """Generates exponentially distributed random numbers.
-    Gives better results for resistor, capacitor and inductor values
-    than uniform distribution."""
-    if a <= 0 or a>b:
-        raise ValueError("Value out of range. Valid range is (0,infinity).")
-    return 10**(random.uniform(log10(a),log10(b)))
-
-def same(x):
-    #True if all elements are same
-    return reduce(lambda x,y:x==y,x)
-
-def random_element(parts,nodes,fixed_node=None):
-    #Return random circuit element from parts list
-    name = random.choice(parts.keys())
-    part = parts[name]
-    spice_line = []
-    node_list = ['n'+str(i) for i in xrange(nodes)]+['0']
-    if 'value' in part.keys():
-        maxval = part['max']
-        minval = part['min']
-        for i in xrange(part['value']):
-            spice_line.append(log_dist(minval,maxval))
-    nodes = [random.choice(node_list) for i in xrange(part['nodes'])]
-    while same(nodes):
-        nodes = [random.choice(node_list) for i in xrange(part['nodes'])]
-    if fixed_node!=None:
-        nodes[0]=fixed_node
-        random.shuffle(nodes)
-    if 'spice' in part:
-        spice_line.append(part['spice'])
-    if 'cost' in part:
-        cost = part['cost']
-    else:
-        cost = 0
-    return Circuit_gene(name,nodes,cost,spice_line)
-
-def mutate_value(element,parts,rel_amount=None):
-    i = random.randint(0,len(element.values)-1)
-    val = element.values[i]
-    name = element.spice_name
-    if rel_amount==None:
-        try:
-            val[i] = log_dist(parts[name]['min'],parts[name]['max'])
-        except:
-            return element
-    else:
-        try:
-            temp = val[i]*(2*random.random-1)*rel_amount
-            if parts[name]['min']<=temp<=parts[name]['max']:
-                val[i] = temp
-        except:
-            return element
-    try:
-        cost = parts[element.spice_name]['cost']
-    except KeyError:
-        cost = 0
-    return Circuit_gene(element.spice_name,element.nodes,cost,val)
-
-class Chromosome:
-    """Class that contains one circuit and all of it's parameters"""
-    def __init__(self,max_parts,parts_list,nodes,extra_value=None):
-        #Maximum number of components in circuit
-        self.max_parts = max_parts
-        #List of nodes
-        self.nodes = nodes
-        self.parts_list = parts_list
-        #Generates randomly a circuit
-        self.elements = [random_element(self.parts_list,self.nodes) for i in xrange(random.randint(1,max_parts/2))]
-        self.extra_range = extra_value
-        if extra_value!=None:
-            self.extra_value = [random.uniform(*i) for i in self.extra_range]
-        else:
-            self.extra_value = None
-
-    def __repr__(self):
-        return str(self.elements)
-
-    def pprint(self):
-        """Pretty print function"""
-        return '\n'.join(map(str,self.elements))
-
-    def get_connected_node(self):
-        """Randomly returns one connected node"""
-        if len(self.elements)>0:
-            device = random.choice(self.elements)
-            return random.choice(device.nodes)
-        else:
-            return 'n1'
-
-    def mutate(self):
-        m = random.randint(0,7)
-        i = random.randint(0,len(self.elements)-1)
-        if m==0:
-            #Change value of one component
-            m = random.randint(0,1)
-            if m==0:
-                #New value
-                self.elements[i] = mutate_value(self.elements[i],self.parts_list)
-            else:
-                #Slight change
-                self.elements[i] = mutate_value(self.elements[i],self.parts_list,rel_amount=0.1)
-        elif m==1:
-            #Add one component if not already maximum number of components
-            if len(self.elements)<self.max_parts:
-                #self.elements.append(random_element(self.parts_list,self.nodes))
-                self.elements.append(random_element(self.parts_list,self.nodes,fixed_node=self.get_connected_node()))
-        elif m==2 and len(self.elements)>1:
-            #Replace one component with open circuit
-            del self.elements[i]
-        elif m==3 and len(self.elements)>1:
-            #Replace one component with open circuit
-            nodes = self.elements[i].nodes
-            random.shuffle(nodes)
-            try:
-                n1 = nodes[0]
-                n2 = nodes[1]
-            except IndexError:
-                return None#Device doesn't have two nodes
-            del self.elements[i]
-            for element in self.elements:
-                element.nodes = [(n1 if i==n2 else i) for i in element.nodes]
-        elif m==4:
-            #Replace one component keeping one node connected
-            fixed_node = random.choice(self.elements[i].nodes)
-            del self.elements[i]
-            self.elements.append(random_element(self.parts_list,self.nodes,fixed_node=fixed_node))
-        elif m==5:
-            #Shuffle list of elements(better crossovers)
-            random.shuffle(self.elements)
-        elif m==6:
-            #Change the extra_value
-            if self.extra_range!=None:
-                i = random.randint(0,len(self.extra_value)-1)
-                self.extra_value[i] = random.uniform(*self.extra_range[i])
-            else:
-                self.mutate()
-        elif m==7:
-            #Relabel nodes
-            l = len(self.elements)-1
-            n1 = random.choice(self.elements[random.randint(0,l)].nodes)
-            n2 = random.choice(self.elements[random.randint(0,l)].nodes)
-            tries = 0
-            while tries<10 or n1!=n2:
-                n2 = random.choice(self.elements[random.randint(0,l)].nodes)
-                tries+=1
-            for element in self.elements:
-                element.nodes = [(n1 if i==n2 else (n2 if i==n1 else i)) for i in element.nodes]
-
-
-    def spice_input(self,options):
-        """Generate the input to SPICE"""
-        program = options+'\n'
-        for i in self.elements:
-            program+=str(i)+'\n'
-        return program
-
-    def evaluate(self,options,timeout):
-        """Used in plotting, when only 1 circuits needs to be simulated"""
-        program = self.spice_input(options)
-        thread = circuits.spice_thread(program)
-        thread.start()
-        #Extra time to make sure that plotting succeeds
-        thread.join(10*timeout)
-        if thread.is_alive():
-            try:
-                thread.spice.terminate()
-            except OSError:
-                pass
-            thread.join()
-        return thread.result
 
 def multipliers(x):
     """Convert values with si multipliers to numbers"""
@@ -261,7 +79,12 @@ class CGP:
     max_mutations=3,
     **kwargs):
 
-
+        if kwargs['chromosome'] == 'netlist':
+            self.chromosome = chromosomes.netlist
+        elif kwargs['chromosome'] == 'chain':
+            self.chromosome = chromosomes.chain
+        else:
+            raise ValueError("Invalid chromosome")
         #Correct the types
         if hasattr(fitness_function, '__call__'):
             self.ff=[fitness_function]
@@ -330,10 +153,11 @@ class CGP:
             raise Exception('plot_every_generation must be of type "bool"')
         self.overflowed = 0
 
-        self.cache_hits = 0
-        self.cache = {}
-        self.cache_size = 0
-        self.cache_max_size = 1000000
+        self.sigma = kwargs['node_stddev']
+        self.inputs = kwargs['inputs']
+        self.outputs = kwargs['outputs']
+        self.special_nodes = kwargs['special_nodes']
+        self.special_node_prob = kwargs['special_node_prob']
 
         #sim_type is list of SPICE simulation types(ac,dc,tran...)
         self.sim_type = [sim[i][0] for i in xrange(len(sim))]
@@ -411,6 +235,84 @@ class CGP:
         else:
             return 0,False,0,temp
 
+    def eval_single(self, ckt, options):
+        """Used in plotting, when only 1 circuits needs to be simulated"""
+        program = ckt.spice(options)
+        thread = circuits.spice_thread(program)
+        thread.start()
+        thread.join(2*self.timeout)
+        return thread.result
+
+    def _optimize(self,pool):
+
+        def g(self,ckt,x):
+            ckt.set_values(x)
+            return self.rank_pool([ckt])[0][0]
+
+        for e,c in enumerate(pool):
+            c = c[1]
+            bounds = c.value_bounds()
+            if len(bounds)==0:
+                continue
+            lbound = [b[0] for b in bounds]
+            ubound = [b[1] for b in bounds]
+            x0 = [c.get_values()]
+            h = lambda x:g(self,c,x)
+            d = DiffEvolver.frombounds(h,lbound,ubound, 30, x0=x0,strategy=('best',2,'bin'))
+            gens = 2
+            prev = pool[e][0]
+            d.solve(2)
+            while gens < 10:
+                gens += 2
+                d.solve(2)
+                if not d.best_value + gens - 4 < prev:
+                    break
+                prev = d.best_value
+            c.set_values(d.best_vector)
+            #print d.best_val_history
+            print e,gens,pool[e][0],d.best_value
+            pool[e] = (d.best_value,c)
+            del d
+        return pool
+
+    def optimize_values(self, pool):
+        best_score = pool[0][0]
+        circuits = min(max(2*multiprocessing.cpu_count(),int(0.01*len(pool))),4*multiprocessing.cpu_count())
+        i = 1
+        #Already reached the best possible score
+        if best_score == 0:
+            return pool
+        #Circuits to optimize
+        op = [pool[0]]
+        indices = [0]
+        while i < len(pool) and len(op)<circuits:
+            if abs(pool[i][0]-best_score)> 0.01 and abs(1-pool[i][0]/best_score):
+                #Make sure scores are different enough and score is
+                #worth optimizing
+                if pool[i][0]<best_score*10 and all(abs(pool[i][0]-p[0])>1 for p in op):
+                    op.append(pool[i])
+                    indices.append(i)
+            i += 1
+
+        print "Optimizing"
+
+        try:
+            l = len(op)
+            cpool = multiprocessing.Pool()
+            partitions = multiprocessing.cpu_count()
+            op = [op[i*l/partitions:(i+1)*l/partitions] for i in xrange(partitions)]
+            p = cpool.map(self._optimize,op)
+            cpool.close()
+        except:
+            cpool.terminate()
+            raise
+        op2 = []
+        for p in op:
+            op2.extend(p)
+        for e,i in enumerate(indices):
+            pool[i] = op2[e]
+        return pool
+
     def rank_pool(self,pool):
         """Multithreaded version of self.rank, computes scores for whole pool"""
         try:
@@ -424,7 +326,7 @@ class CGP:
                 for t in xrange(len(pool)):
                     if scores[t]>=inf:
                         continue
-                    thread = circuits.spice_thread(pool[t].spice_input(self.spice_commands[i]))
+                    thread = circuits.spice_thread(pool[t].spice(self.spice_commands[i]))
                     thread.start()
                     thread.join(self.timeout)
                     if thread.is_alive():
@@ -465,7 +367,8 @@ class CGP:
                                 for k in thread.result[1].keys():
                                     scores[t]+=self._rank(thread.result[1],i,k,extra=pool[t].extra_value,circuit=pool[t])
                         thread.result = None
-                if errors + skipped == len(pool):
+                #Disable error reporting when size of pool is very low
+                if errors + skipped == len(pool) and len(pool)>10:
                     #All simulations failed
                     raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
             if timeouts != 0:
@@ -515,7 +418,7 @@ class CGP:
             except TypeError as t:
                 print 'Fitness function returned invalid value, while testing {} of simulation {}'.format(k,i)
                 print t
-                raise
+                raise t
             except OverflowError:
                 self.overflowed += 1
                 total=inf
@@ -631,7 +534,7 @@ class CGP:
         #Update best
         if self.generation==1:
             #Randomly generate some circuits
-            newpool=[Chromosome(self.max_parts,self.parts_list,self.nodes,extra_value=self.extra_value) for i in xrange(self.pool_size)]
+            newpool = [self.chromosome.random_circuit(self.parts_list, self.max_parts, self.sigma, self.inputs, self.outputs, self.special_nodes, self.special_node_prob, extra_value=self.extra_value) for i in xrange(self.pool_size)]
             #Generate seed circuits
             for i,circuit in enumerate(self.seed_circuits):
                 newpool[i].elements=circuit
@@ -686,12 +589,7 @@ class CGP:
                 c=deepcopy(sf(self.pool,weight=self.selection_weight))   #selected chromosome
                 if random.random()<=self.crate:#crossover
                     d=sf(self.pool,weight=self.selection_weight)
-                    l = max(len(c.elements),len(d.elements))
-                    r1 = random.randint(0,l)
-                    r2 = random.randint(0,l)
-                    if r1>r2:
-                        r1,r2=r2,r1
-                    c.elements = c.elements[:r1]+d.elements[r1:r2]+c.elements[r2:]
+                    c.crossover(d)
 
                 if random.random()<=self.mrate:#mutation
                     c.mutate()
@@ -702,7 +600,7 @@ class CGP:
                 newpool.append(c)
             while newsize<self.pool_size:
                 #Generate new circuits randomly
-                newpool.append(Chromosome(self.max_parts,self.parts_list,self.nodes,extra_value=self.extra_value))
+                newpool.append(self.chromosome.random_circuit(self.parts_list, self.max_parts, self.sigma, self.inputs, self.outputs, self.special_nodes, self.special_node_prob, extra_value=self.extra_value))
                 newsize+=1
 
         start = time()
@@ -730,6 +628,11 @@ class CGP:
 
         self.overflowed = 0
 
+        #Optimize values
+        if self.generation == 5 or self.generation % 10 == 0:
+            self.pool = self.optimize_values(self.pool)
+            self.pool = sorted(self.pool)
+
         print "Simulations per second: {}".format(round((len(self.spice_commands)*self.pool_size)/(time()-start),1))
         print "Time per generation: {} seconds".format(round(time()-start,1))
         if self.c_free_gens== self.generation:
@@ -746,11 +649,11 @@ class CGP:
                 print strftime("%Y-%m-%d %H:%M:%S")
                 if self.pool[0][1].extra_value != None:
                     print 'Extra values: '+str(self.pool[0][1].extra_value)
-                print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',self.pool[0][1].pprint(),'\n'
+                print "Generation "+str(self.generation)+" New best -",self.pool[0][0],'\n',str(self.pool[0][1]),'\n'
                 #print 'Cache size: %d/%d'%(self.cache_size,self.cache_max_size)+', Cache hits',self.cache_hits
                 self.alltimebest=self.pool[0]
                 self.plotbest()
-                self.logfile.write(strftime("%Y-%m-%d %H:%M:%S")+' - Generation - '+str(self.generation) +' - '+str(self.alltimebest[0])+':\n'+self.alltimebest[1].pprint()+'\n\n')
+                self.logfile.write(strftime("%Y-%m-%d %H:%M:%S")+' - Generation - '+str(self.generation) +' - '+str(self.alltimebest[0])+':\n'+str(self.alltimebest[1])+'\n\n')
                 self.logfile.flush()#Flush changes to the logfile
 
         #Scale score for gradual constraint ramping
@@ -781,7 +684,7 @@ class CGP:
                             i=c,name=str(c))
             elif PLOTTING=='external':
                 for i in xrange(len(self.spice_commands)):
-                    v = circuit.evaluate(self.spice_commands[i],self.timeout)[1]
+                    v = self.eval_single(circuit,self.spice_commands[i])[1]
                     for k in v.keys():
                         freq = v[k][0]
                         gain = v[k][1]
@@ -835,7 +738,8 @@ class CGP:
         os.rename(out_temp,out)
 
 def load_settings(filename):
-    no_defaults= ['title','max_parts','spice_commands','parts','fitness_function']
+    no_defaults= ['title','max_parts','spice_commands','parts','fitness_function','inputs','outputs']
+            #newpool = [random_circuit(self.parts_list, self.max_parts, self.sigma, self.inputs, self.outputs, self.special_nodes, self.special_node_prob) for i in xrange(self.pool_size)]
     default_settings = {'common':'',
                         'models':'',
                         'constraints':None,
@@ -862,6 +766,10 @@ def load_settings(filename):
                         'seed':None,
                         'seed_copies':1,
                         'timeout':1.0,
+                        'special_nodes':[],
+                        'special_node_prob':0.1,
+                        'node_stddev':2,
+                        'chromosome':'netlist',
                         }
     settings = default_settings.copy()
     temp = {}
