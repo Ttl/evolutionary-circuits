@@ -1,5 +1,4 @@
-import random
-from math import log10
+from common import *
 
 class Device:
     """Represents a single component"""
@@ -12,18 +11,6 @@ class Device:
         self.cost = cost
     def __repr__(self):
         return self.spice_name+str(id(self))+' '+' '.join(map(str,self.nodes))+' '+' '.join(map(str,*self.values))
-
-def log_dist(a,b):
-    """Generates exponentially distributed random numbers.
-    Gives better results for resistor, capacitor and inductor values
-    than uniform distribution."""
-    if a <= 0 or a>b:
-        raise ValueError("Value out of range. Valid range is (0,infinity).")
-    return 10**(random.uniform(log10(a),log10(b)))
-
-def same(x):
-    #True if all elements are same
-    return reduce(lambda x,y:x==y,x)
 
 def random_element(parts,node_list,fixed_node=None):
     #Return random circuit element from parts list
@@ -213,8 +200,6 @@ class Chromosome:
         return program
 
 
-#newpool=[Chromosome(opts.max_parts,opts.parts_list,opts.nodes,extra_value=opts.extra_value) for i in xrange(opts.pool_size)]
-
 def random_circuit(parts, inst_limit, sigma, inputs, outputs, special_nodes, special_node_prob, extra_value=None):
     """Generates a random circuit.
     parts - dictionary of available devices.
@@ -251,6 +236,60 @@ def random_circuit(parts, inst_limit, sigma, inputs, outputs, special_nodes, spe
         c.elements[-1].nodes[0] = random.choice(outputs)
         random.shuffle(c.elements[-1].nodes)
     return c
+
+
+def parse_circuit(circuit, inst_limit, parts, sigma, inputs, outputs, special_nodes, special_node_prob, extra_value=None):
+    devices = []
+    special = special_nodes[:]
+    if '0' not in special:
+        special.append('0')
+    if max(len(inputs),len(outputs)) > inst_limit:
+        raise ValueError("Number of allowed nodes is too small.")
+    special = special + inputs + outputs
+    #Devices starting with same substring are sorted longest
+    #first to check longest possible device names first
+    sorted_dev = sorted(parts.keys(),reverse=True)
+    nodes = {}
+    len_nodes = 1
+    for n,line in enumerate(circuit.splitlines()):
+        if not line:
+            #Ignores empty lines
+            continue
+
+        #Current device fields
+        d_spice = []
+        #Try all the devices
+        for dev in sorted_dev:
+            if line.startswith(dev):
+                #Found matching device from parts list
+                line = line.split()
+                d_nodes = line[1:parts[dev]['nodes']+1]
+                for node in d_nodes:
+                    if node not in special and node not in nodes:
+                        nodes[node] =len_nodes
+                        len_nodes += 1
+                d_nodes = [nodes[node] if node in nodes else node for node in d_nodes]
+                d_spice = line[parts[dev]['nodes']+1:]
+                for e in xrange(len(d_spice)):
+                    #Correct types and change SPICE multipliers to bare numbers.
+                    try:
+                        d_spice[e] = multipliers(d_spice[e])
+                    except:
+                        #Not a number.
+                        pass
+                print dev,d_nodes,d_spice
+                devices.append(Device(dev,d_nodes,0,d_spice))
+                break
+
+        else:
+            #Device not found
+            print "Couldn't find device in line {}:{}\nIgnoring this line".format(n,line)
+    #def __init__(self,max_parts,parts_list,nodes,extra_value=None):
+    special.extend(map(str,range(1,inst_limit)))
+    circuit = Chromosome(inst_limit, parts, special, extra_value)
+    circuit.elements = devices
+    print circuit
+    return circuit
 
 #parts = { 'R':{'value':(1,1e6),'nodes':2}, 'C':{'value':(1e-12,1e-3),'nodes':2}, 'Q':{'model':('2N3904','2N3906'),'kwvalues':{'w':(1e-7,1e-5),'l':(1e-7,1e-5)},'nodes':3} }
 ##r = Device('R',100,None,None,0)

@@ -16,9 +16,6 @@ import os
 import getch
 import sys
 import multiprocessing
-#SPICE to python circuit parser
-#FIXME
-#from spice_parser import *
 import chromosomes
 from diff_evolve import *
 inf = 1e30
@@ -212,7 +209,9 @@ class CGP:
             if type(seed)==str:
                 seed = [seed]
             for element in seed:
-                self.seed_circuits.append(parse_circuit(element,self.parts_list))
+                self.seed_circuits.append(self.chromosome.parse_circuit(element, 
+                    self.max_parts, self.parts_list, self.sigma, self.inputs, self.outputs,
+                    self.special_nodes, self.special_node_prob, self.extra_value))
 
 
 
@@ -258,21 +257,24 @@ class CGP:
             ubound = [b[1] for b in bounds]
             x0 = [c.get_values()]
             h = lambda x:g(self,c,x)
-            d = DiffEvolver.frombounds(h,lbound,ubound, 30, x0=x0,strategy=('best',2,'bin'))
-            gens = 2
-            prev = pool[e][0]
-            d.solve(2)
-            while gens < 10:
-                gens += 2
+            try:
+                d = DiffEvolver.frombounds(h,lbound,ubound, 30, x0=x0,strategy=('best',2,'bin'))
+                gens = 2
+                prev = pool[e][0]
                 d.solve(2)
-                if not d.best_value + gens - 4 < prev:
-                    break
-                prev = d.best_value
-            c.set_values(d.best_vector)
-            #print d.best_val_history
-            print e,gens,pool[e][0],d.best_value
-            pool[e] = (d.best_value,c)
-            del d
+                while gens < 10:
+                    gens += 2
+                    d.solve(2)
+                    if not d.best_value + gens - 4 < prev:
+                        break
+                    prev = d.best_value
+                c.set_values(d.best_vector)
+                #print d.best_val_history
+                print e,gens,pool[e][0],d.best_value
+                pool[e] = (d.best_value,c)
+                del d
+            except KeyboardInterrupt:
+                return
         return pool
 
     def optimize_values(self, pool):
@@ -303,9 +305,9 @@ class CGP:
             op = [op[i*l/partitions:(i+1)*l/partitions] for i in xrange(partitions)]
             p = cpool.map(self._optimize,op)
             cpool.close()
-        except:
+        except KeyboardInterrupt:
             cpool.terminate()
-            raise
+            return
         op2 = []
         for p in op:
             op2.extend(p)
@@ -371,15 +373,17 @@ class CGP:
                 if errors + skipped == len(pool) and len(pool)>10:
                     #All simulations failed
                     raise SyntaxError("Simulation {} failed for every circuit.\nSpice returned {}".format(i,lasterror))
-            if timeouts != 0:
-                print '{} simulation(s) timed out'.format(timeouts)
-            if timeouts > len(pool)/10:
-                if timeouts > len(pool)/2:
-                    self.timeout *= 1.5
-                    print "Increasing timeout length by 50%, to {}".format(self.timeout)
-                else:
-                    self.timeout *= 1.25
-                    print "Increasing timeout length by 25%, to {}".format(self.timeout)
+            #Don't increase timeout when there is only 1 circuit
+            if len(pool) > 1:
+                if timeouts != 0:
+                    print '{} simulation(s) timed out'.format(timeouts)
+                if timeouts > len(pool)/10:
+                    if timeouts > len(pool)/2:
+                        self.timeout *= 1.5
+                        print "Increasing timeout length by 50%, to {}".format(self.timeout)
+                    else:
+                        self.timeout *= 1.25
+                        print "Increasing timeout length by 25%, to {}".format(self.timeout)
             return [(scores[i],pool[i]) for i in xrange(len(pool))]
         except KeyboardInterrupt:
             return
@@ -423,6 +427,8 @@ class CGP:
                 self.overflowed += 1
                 total=inf
                 pass
+            except KeyboardInterrupt:
+                return
             if self.constraints[i]!=None and self.c_free_gens<=self.generation :
                 con=self.constraints[i]( f[p],v[p],k,extra=extra,generation=self.generation )
                 if con==None:
@@ -537,7 +543,7 @@ class CGP:
             newpool = [self.chromosome.random_circuit(self.parts_list, self.max_parts, self.sigma, self.inputs, self.outputs, self.special_nodes, self.special_node_prob, extra_value=self.extra_value) for i in xrange(self.pool_size)]
             #Generate seed circuits
             for i,circuit in enumerate(self.seed_circuits):
-                newpool[i].elements=circuit
+                newpool[i]=circuit
                 #Set seed circuit extra values
                 if self.extra_value!=None:
                     best_value = (inf,None)
@@ -548,7 +554,7 @@ class CGP:
                             newpool[i].extra_value[c] = ev
                             score = 0
                             for command in xrange(len(self.spice_commands)):
-                                v = newpool[i].evaluate(self.spice_commands[command],self.timeout)[1]
+                                v = self.eval_single(newpool[i],self.spice_commands[command])[1]
                                 for k in v.keys():
                                     score += self._rank(v,command,k,extra=newpool[i].extra_value)
                             if 0 < score < best_value[0]:
@@ -560,7 +566,7 @@ class CGP:
                 #No extra values
                 score = 0
                 for command in xrange(len(self.spice_commands)):
-                    v = newpool[i].evaluate(self.spice_commands[command],self.timeout)[1]
+                    v = self.eval_single(newpool[i],self.spice_commands[command])[1]
                     for k in v.keys():
                         score += self._rank(v,command,k,extra=newpool[i].extra_value)
                 print "Seed circuit {}, score: {}".format(i,score)

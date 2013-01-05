@@ -1,5 +1,6 @@
 import random
-from math import log10
+import ast
+from common import *
 
 class Device:
     def __init__(self, name, value, kwvalues, model, cost):
@@ -49,15 +50,6 @@ class Device:
             else:
                 self.kwvalues[kw] = random.uniform(*r)
 
-def value_dist(val):
-    if len(val)==3:
-        return val[3](*val[:2])
-    else:
-        if val[0]>0:
-            return log_dist(*val)
-        else:
-            return random.uniform(*val)
-
 def random_device(parts):
     """Generates a random device from parts list.
     "sigma" is the gaussian distribution standard deviation,
@@ -75,29 +67,6 @@ def random_device(parts):
     if 'cost' in r.keys():
         cost = r['cost']
     return Device(name, value, kw, model, cost)
-
-def log_dist(a,b):
-    """Generates exponentially distributed random numbers.
-    Gives better results for resistor, capacitor and inductor values
-    than the uniform distribution."""
-    if a <= 0 or a>b:
-        raise ValueError("Value out of range. Valid range is (0,infinity).")
-    return 10**(random.uniform(log10(a),log10(b)))
-
-def same(x):
-    #True if all elements are same
-    return reduce(lambda x,y:x==y,x)
-
-def lst_random(lst, probs):
-    """Return element[i] with probability probs[i]."""
-    s = sum(probs)
-    r = random.uniform(0,s)
-    t = 0
-    for i in xrange(len(lst)):
-        t += probs[i]
-        if r <= t:
-            return lst[i]
-    return lst[-1]#Because of rounding errors or something?
 
 def random_instruction(parts, sigma, special_nodes, special_node_prob, mu=0.5):
     """Generate random instruction with random device.
@@ -187,30 +156,7 @@ class Instruction:
                 for i in xrange(len(self.args)):
                     if random.random() < self.special_node_prob:
                         self.args[i] = random.choice(self.special_nodes)
-def argmin(x):
-    if len(x) < 2:
-        return x[0]
-    bestv,idx = x[0],0
-    for e,i in enumerate(x[1:],1):
-        if i<bestv:
-            bestv = i
-            idx = e
-    return idx
 
-def argmax(x):
-    if len(x) < 2:
-        return x[0]
-    bestv,idx = x[0],0
-    for e,i in enumerate(x[1:],1):
-        if i>bestv:
-            bestv = i
-            idx = e
-    return idx
-
-def normalize_list(lst):
-    """Return normalized list that sums to 1"""
-    s = sum(lst)
-    return [i/float(s) for i in lst]
 
 def random_circuit(parts, inst_limit, sigma, inputs, outputs, special_nodes, special_node_prob, extra_value=None):
     """Generates a random circuit.
@@ -371,6 +317,76 @@ class Circuit:
             self.extra_value = values[i:]
         return None
 
+def parse_circuit(circuit, inst_limit, parts, sigma, inputs, outputs, special_nodes, special_node_prob, extra_value=None):
+    """Converts netlist to chromosome format."""
+    if '0' not in special_nodes:
+        special_nodes.append('0')
+    special = special_nodes + inputs + outputs
+    #Devices starting with same substring are sorted longest
+    #first to check longest possible device names first
+    sorted_dev = sorted(parts.keys(),reverse=True)
+    instructions = []
+    #Table for converting circuit nodes to chromosome nodes
+    nodes = {}
+    len_nodes = 1
+    current_node = 0
+    for n,line in enumerate(circuit.splitlines()):
+        if not line:
+            #Ignores empty lines
+            continue
+
+        #Current device fields
+        d_spice = []
+        #Try all the devices
+        for dev in sorted_dev:
+            if line.startswith(dev):
+                #Found matching device from parts list
+                current_node += 1#Increase current node
+                line = line.split()
+                d_nodes = line[1:parts[dev]['nodes']+1]
+                for node in d_nodes:
+                    if node not in special and node not in nodes:
+                        nodes[node] =len_nodes
+                        len_nodes += 1
+
+                d_spice = line[parts[dev]['nodes']+1:]
+                for e in xrange(len(d_spice)):
+                    #Correct types and change SPICE multipliers to bare numbers.
+                    try:
+                        d_spice[e] = multipliers(d_spice[e])
+                    except:
+                        #Not a number.
+                        pass
+                if 'value' in parts[dev]:
+                    value = float(d_spice[0])
+                    d_spice = d_spice[1:]
+                else:
+                    value = None
+                if 'model' in parts[dev]:
+                    model = d_spice[0]
+                    d_spice = d_spice[1:]
+                else:
+                    model = None
+                if 'kwvalues' in parts[dev]:
+                    d_spice = ["'"+i[:i.index('=')]+"'"+i[i.index('='):] for i in d_spice]
+                    kwvalues = ast.literal_eval('{'+', '.join(d_spice).replace('=',':')+'}')
+                else:
+                    kwvalues = None
+                if 'cost' in parts[dev]:
+                    cost = parts['cost']
+                else:
+                    cost = 0
+                device = Device(dev, value, kwvalues, model, cost)
+                node_temp = [nodes[node] - current_node + inst_limit if node in nodes else node for node in d_nodes]
+                instructions.append(Instruction(1, device, sigma, node_temp, special, special_node_prob))
+                break
+
+        else:
+            #Device not found
+            print "Couldn't find device in line {}:{}\nIgnoring this line".format(n,line)
+    if len(instructions) > inst_limit:
+        raise ValueError("Maximum number of devices is too small for seed circuit.")
+    return Circuit(instructions, parts, inst_limit, (parts, sigma, special, special_node_prob), extra_value)
 
 #parts = { 'R':{'value':(1,1e6),'nodes':2}, 'C':{'value':(1e-12,1e-3),'nodes':2}, 'Q':{'model':('2N3904','2N3906'),'kwvalues':{'w':(1e-7,1e-5),'l':(1e-7,1e-5)},'nodes':3} }
 #r = Device('R',100,None,None,0)
@@ -380,3 +396,14 @@ class Circuit:
 #print c
 #c.mutate()
 #print c
+#seed="""
+#R1 n4 n3 1k
+#R2 out n3 1k
+#Q11 n5 n4 in1 2N3904
+#Q12 n5 n4 in2 2N3904
+#Q13 out n5 0 2N3904
+#"""
+#inputs = ['in1','in2']
+#outputs = ['out']
+#special = []
+#print parse_circuit(seed, 10, parts, 2, inputs, outputs, special, 0.1)
