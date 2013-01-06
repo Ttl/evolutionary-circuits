@@ -75,15 +75,15 @@ def random_instruction(parts, sigma, special_nodes, special_node_prob, mu=0.5):
     nodes = [int(round(random.gauss(mu,sigma))) for i in xrange(parts[d.name]['nodes'])]
     while same(nodes):
         nodes = [int(round(random.gauss(mu,sigma))) for i in xrange(parts[d.name]['nodes'])]
-    #Sprinkle some special nodes
-    if type(special_node_prob)==list:
-        for i in xrange(len(nodes)):
-            if random.random() < special_node_prob[i]:
-                nodes[i] = lst_random(special_nodes,special_node_prob)
-    else:
-        for i in xrange(len(nodes)):
-            if random.random() < special_node_prob:
-                nodes[i] = random.choice(special_nodes)
+        #Sprinkle some special nodes
+        if type(special_node_prob)==list:
+            for i in xrange(len(nodes)):
+                if random.random() < special_node_prob[i]:
+                    nodes[i] = lst_random(special_nodes,special_node_prob)
+        else:
+            for i in xrange(len(nodes)):
+                if random.random() < special_node_prob:
+                    nodes[i] = random.choice(special_nodes)
 
     command = random.randint(0,1)
     return Instruction(command, d, sigma, nodes, special_nodes, special_node_prob)
@@ -147,15 +147,15 @@ class Instruction:
             self.args = [int(random.gauss(0,self.sigma)) for i in xrange(parts[self.device.name]['nodes'])]
             while same(self.args):
                 self.args = [int(random.gauss(0,self.sigma)) for i in xrange(parts[self.device.name]['nodes'])]
-            #Sprinkle some special nodes
-            if type(self.special_node_prob)==list:
-                for i in xrange(len(self.args)):
-                    if random.random() < self.special_node_prob[i]:
-                        self.args[i] = lst_random(self.special_nodes,self.special_node_prob)
-            else:
-                for i in xrange(len(self.args)):
-                    if random.random() < self.special_node_prob:
-                        self.args[i] = random.choice(self.special_nodes)
+                #Sprinkle some special nodes
+                if type(self.special_node_prob)==list:
+                    for i in xrange(len(self.args)):
+                        if random.random() < self.special_node_prob[i]:
+                            self.args[i] = lst_random(self.special_nodes,self.special_node_prob)
+                else:
+                    for i in xrange(len(self.args)):
+                        if random.random() < self.special_node_prob:
+                            self.args[i] = random.choice(self.special_nodes)
 
 
 def random_circuit(parts, inst_limit, sigma, inputs, outputs, special_nodes, special_node_prob, extra_value=None):
