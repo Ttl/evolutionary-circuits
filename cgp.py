@@ -775,7 +775,7 @@ def load_settings(filename):
                         'special_nodes':[],
                         'special_node_prob':0.1,
                         'node_stddev':2,
-                        'chromosome':'netlist',
+                        'chromosome':'chain',
                         }
     settings = default_settings.copy()
     temp = {}
