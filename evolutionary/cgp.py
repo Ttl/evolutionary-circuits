@@ -702,7 +702,8 @@ class CGP:
                             constraint_val = None
 
 
-                        plt = subprocess.Popen(['python','plotting.py'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                        command = os.path.join(os.path.dirname(os.path.abspath(__file__)),'plotting.py')
+                        plt = subprocess.Popen(['python',command],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                         try:
                             title = self.plot_titles[i][k]
                         except (KeyError,TypeError):
@@ -712,11 +713,14 @@ class CGP:
                                 yrange = self.plot_yrange[k]
                         else:
                             yrange = None
-                        data = ((freq,gain),k,goal_val,self.sim_type[i],self.generation,score,self.directory,title,yrange,self.log_plot[i],constraint_val,i)
-                        plt.communicate(str(data))
-        except:
+                        path = os.path.join(os.getcwd(),self.directory)
+                        data = ((freq,gain),k,goal_val,self.sim_type[i],self.generation,score,path,title,yrange,self.log_plot[i],constraint_val,i)
+                        output = plt.communicate(str(data))
+                        if output != ('',''):
+                            raise multiprocessing.ProcessError("Plotting failed")
+        except multiprocessing.ProcessError:
             print "Plotting failed"
-            raise
+            print output[1]
 
 
     def run(self):
