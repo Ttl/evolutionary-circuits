@@ -359,6 +359,8 @@ def parse_circuit(circuit, inst_limit, parts, sigma, inputs, outputs, special_no
                         pass
                 if 'value' in parts[dev]:
                     value = float(d_spice[0])
+                    if not parts[dev]['value'][0]<=value<=parts[dev]['value'][1]:
+                        raise ValueError("Value of component on line {} is out of bounds\n{}\nBounds defined in the parts dictionary are: {} to {}".format(n,' '.join(line),parts[dev]['value'][0],parts[dev]['value'][1]))
                     d_spice = d_spice[1:]
                 else:
                     value = None
