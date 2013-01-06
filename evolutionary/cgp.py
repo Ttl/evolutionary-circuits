@@ -309,8 +309,8 @@ class CGP:
             cpool.terminate()
             return
         op2 = []
-        for p in op:
-            op2.extend(p)
+        for thread in p:
+            op2.extend(thread)
         for e,i in enumerate(indices):
             pool[i] = op2[e]
         return pool
