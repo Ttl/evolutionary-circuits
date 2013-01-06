@@ -17,7 +17,7 @@ import getch
 import sys
 import multiprocessing
 import chromosomes
-from diff_evolve import *
+from optimization import *
 inf = 1e30
 
 def multipliers(x):
