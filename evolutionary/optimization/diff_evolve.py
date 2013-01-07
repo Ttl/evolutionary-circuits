@@ -103,15 +103,22 @@ class DiffEvolver(object):
 
     def frombounds(cls, func, lbound, ubound, npop, crossover_rate=0.5,
             scale=None, x0=None, strategy=('rand', 2, 'bin'), eps=1e-6):
-        pop0 = [[random.random()*(ubound[i]-lbound[i]) + lbound[i] for i in xrange(len(lbound))] for c in xrange(npop)]
-        if x0!=None:
+        if x0==None:
+            pop0 = [[random.random()*(ubound[i]-lbound[i]) + lbound[i] for i in xrange(len(lbound))] for c in xrange(npop)]
+        else:
+            pop0 = [0]*npop
             for e,x in enumerate(x0):
                 if len(x)!=len(lbound):
                     raise ValueError("Dimension of x0[{}] is incorrect".format(e))
                 if any(not lbound[i]<=x[i]<=ubound[i] for i in xrange(len(lbound))):
-                    print [(lbound[c],x[i][c],ubound[c]) for c in xrange(len(lbound))]
                     raise ValueError("x0[{}] not inside the bounds.".format(e))
-                pop0[e] = x
+                for i in xrange(e,npop,len(x0)):
+                    pop0[i] = x
+            delta = 0.3
+            pop0 = [[delta*(random.random()*(ubound[i]-lbound[i]) + lbound[i])+p[i] for i in xrange(len(lbound))] for p in pop0]
+            pop0 = [[lbound[i] if p[i]<lbound[i] else (ubound[i] if p[i]>ubound[i] else p[i]) for i in xrange(len(lbound))] for p in pop0]
+            #Make sure to include x0
+            pop0[:len(x0)] = x0
         return cls(func, pop0, crossover_rate=crossover_rate, scale=scale,
             strategy=strategy, eps=eps, lbound=lbound, ubound=ubound)
     frombounds = classmethod(frombounds)
