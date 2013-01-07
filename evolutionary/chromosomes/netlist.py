@@ -277,7 +277,6 @@ def parse_circuit(circuit, inst_limit, parts, sigma, inputs, outputs, special_no
                     except:
                         #Not a number.
                         pass
-                print dev,d_nodes,d_spice
                 devices.append(Device(dev,d_nodes,0,d_spice))
                 break
 
@@ -288,7 +287,6 @@ def parse_circuit(circuit, inst_limit, parts, sigma, inputs, outputs, special_no
     special.extend(map(str,range(1,inst_limit)))
     circuit = Chromosome(inst_limit, parts, special, extra_value)
     circuit.elements = devices
-    print circuit
     return circuit
 
 #parts = { 'R':{'value':(1,1e6),'nodes':2}, 'C':{'value':(1e-12,1e-3),'nodes':2}, 'Q':{'model':('2N3904','2N3906'),'kwvalues':{'w':(1e-7,1e-5),'l':(1e-7,1e-5)},'nodes':3} }
