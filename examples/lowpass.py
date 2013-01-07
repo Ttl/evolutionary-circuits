@@ -23,7 +23,7 @@ outputs = ['out']
 
 #Dictionary of the availabe parts
 parts = {'R':{'nodes':2,'value':(0.1,1e6),},
-         'C':{'nodes':2,'value':(1e-12,1e-7)},
+         'C':{'nodes':2,'value':(1e-12,1e-5)},
          'L':{'nodes':2,'value':(1e-9,1e-3)},
          }
 
@@ -38,6 +38,8 @@ def _fitness_function1(f,k,**kwargs):
 
 def _constraint1(f,x,k,**kwargs):
     if k[0]=='v':
+        if f>8000:
+            return x <= -20
         if f>1000:
             return x<=0.5
         elif f<100:
@@ -48,12 +50,12 @@ def _constraint1(f,x,k,**kwargs):
 
 #This circuit will be added to the first generation
 #Circuit below scores poorly, because it fails to fulfill the constraints
-#seed = """
-#R1 in out 1k
-#C1 out 0 150n
-#"""
+seed = """
+R1 in out 1k
+C1 out 0 150n
+"""
 
-population=2000#Too small population might not converge, or converges to local minimum, but is faster to simulate
+population=3000#Too small population might not converge, or converges to local minimum, but is faster to simulate
 max_parts=8#Maximum number of parts
 
 #Enabling this makes the program ignore constraints for few first generations.
