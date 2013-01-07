@@ -287,14 +287,20 @@ class CGP:
         #Circuits to optimize
         op = [pool[0]]
         indices = [0]
+        for score in xrange(1,len(pool)):
+            if pool[score][0]>inf/2:
+                break
+        delta = (pool[score-1][0]-pool[0][0])/(score+1)
         while i < len(pool) and len(op)<circuits:
+            if pool[i][0] > best_score*100:
+                break
             if abs(pool[i][0]-best_score)> 0.01 and abs(1-pool[i][0]/best_score):
                 #Make sure scores are different enough and score is
                 #worth optimizing
-                if pool[i][0]<best_score*10 and all(abs(pool[i][0]-p[0])>1 for p in op):
+                if all(abs(pool[i][0]-p[0])>delta for p in op):
                     op.append(pool[i])
                     indices.append(i)
-            i += 1
+            i += random.randint(1,min(2,score/circuits))
 
         print "Optimizing"
 
